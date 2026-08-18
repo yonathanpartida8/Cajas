@@ -1,0 +1,13 @@
+{
+  "_comentario": "Lista de archivos de sonido por categoría. Cada nombre es relativo a sounds/<categoría>/. Admite .wav, .mp3, .ogg y .m4a. Si el servidor lista las carpetas, los archivos también se detectan solos y no hace falta tocar este archivo.",
+  "toque": [],
+  "botones": [],
+  "objetos": [],
+  "luces": [],
+  "abrir": [],
+  "cerrar": [],
+  "borrador": [],
+  "medidas": [],
+  "exito": [],
+  "error": []
+}

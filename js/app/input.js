@@ -1,21 +1,27 @@
-// Gestos táctiles sobre el lienzo.
+// Gestos táctiles sobre el lienzo. Cada gesto tiene un significado único y no
+// se pisa con los demás:
 //
-//   1 dedo sobre una imagen  → mover la imagen (puede cambiar de superficie)
-//   1 dedo sobre la tapa (si está activada para moverse) → mover la tapa
-//   1 dedo en cualquier otro sitio → girar la vista (con inercia)
-//   2 dedos → acercar y desplazar la vista; sobre la imagen elegida, escalarla y girarla
-//   toque corto → seleccionar imagen o superficie
+//   toque corto              → seleccionar (superficie, imagen u objeto)
+//   pulsación larga          → abrir los ajustes del objeto tocado
+//   arrastrar sobre un objeto→ moverlo (la cámara no se mueve)
+//   arrastrar en otro sitio  → girar la vista (con zona muerta e inercia)
+//   dos dedos                → acercar, desplazar y girar la vista
+//   dos dedos sobre el objeto→ escalarlo y girarlo
 import { clamp } from '../core/math3d.js';
 import { S } from '../box/model.js';
 import { audio } from '../features/audio.js';
 
-const TAP = 10;          // px de tolerancia para considerar "toque"
-const EDGE = .02;        // margen para aceptar un cambio de superficie
+const TAP = 12;      // px de tolerancia para considerar "toque"
+const DEAD = 7;      // px muertos: roces pequeños no mueven la cámara
+const LONG = 460;    // ms de pulsación larga
+const EDGE = .02;    // margen para aceptar un cambio de superficie
+const ORBIT = .0052; // sensibilidad de giro (más baja = más control)
 
 export function createInput(canvas, api) {
   const pts = new Map();
   const cam = api.cam;
-  let mode = null, start = null, gesture = null, moved = 0, t0 = 0;
+  let mode = null, start = null, gesture = null, moved = 0, drift = 0, t0 = 0;
+  let longT = 0, longFired = false, armed = false;
 
   const pos = e => ({ x: e.clientX, y: e.clientY });
   const centroid = () => {
@@ -30,6 +36,7 @@ export function createInput(canvas, api) {
     const [a, b] = [...pts.values()];
     return Math.atan2(b.y - a.y, b.x - a.x);
   };
+  const cancelLong = () => { clearTimeout(longT); longT = 0; };
 
   // ---------------------------------------------------------------- inicio
   function down(e) {
@@ -37,10 +44,10 @@ export function createInput(canvas, api) {
     canvas.setPointerCapture(e.pointerId);
     pts.set(e.pointerId, pos(e));
 
-    if (pts.size === 2) return twoFingers();
+    if (pts.size === 2) { cancelLong(); return twoFingers(); }
     if (pts.size > 2) return;
 
-    moved = 0; t0 = performance.now();
+    moved = 0; drift = 0; armed = false; longFired = false; t0 = performance.now();
     cam.vTheta = cam.vPhi = 0;
     const p = pos(e);
 
@@ -56,14 +63,22 @@ export function createInput(canvas, api) {
     const oHit = api.scene.objectAt(c.eye, c.ray(nx, ny));
     const solid = api.scene.pick(c.eye, c.ray(nx, ny), { skipPlain: true, skipXray: true });
     if (oHit && (!solid || oHit.t <= solid.t + .02)) {
-      start.obj = oHit.obj;
-      api.selectObject(oHit.obj.id);
-      if (!oHit.obj.locked && oHit.obj.type !== 'tira') {
+      const o = oHit.obj;
+      start.obj = o;
+      api.selectObject(o.id);
+      longT = setTimeout(() => {
+        longT = 0; longFired = true;
+        api.openObject(); audio.play('panel'); audio.buzz(12);
+      }, LONG);
+      if (!o.locked && o.type !== 'tira') {
         mode = 'obj';
+        // el objeto no salta bajo el dedo: se guarda la diferencia y se conserva
+        const g = api.spotAt(p.x, p.y, o.y);
+        start.grab = g ? { x: o.x - g.x, z: o.z - g.z } : { x: 0, z: 0 };
         audio.play('grab');
         return;
       }
-      if (oHit.obj.locked) api.toast('Objeto fijado · pulsa «Fijar» para soltarlo');
+      if (o.locked) api.toast('Objeto fijado · pulsa «Fijar» para soltarlo');
       mode = 'orbit';
       return;
     }
@@ -81,11 +96,11 @@ export function createInput(canvas, api) {
     mode = 'orbit';
   }
 
-  /** Al entrar el segundo dedo se decide: transformar la imagen o mover la vista. */
+  /** Al entrar el segundo dedo se decide: transformar el objeto/imagen o mover la vista. */
   function twoFingers() {
     const so = api.selectedObject?.();
     if (so && !so.locked && so.type !== 'tira') {
-      gesture = { d: spread(), a: twist(), c: centroid(), size: so.scale ?? 1, rot: so.rot || 0, obj: so };
+      gesture = { d: spread(), a: twist(), c: centroid(), obj: so, scl: { ...so.scl }, rot: { ...so.rot } };
       mode = 'pinch-obj';
       audio.play('grab');
       return;
@@ -108,19 +123,25 @@ export function createInput(canvas, api) {
     const dx = p.x - prev.x, dy = p.y - prev.y;
     pts.set(e.pointerId, p);
     moved += Math.abs(dx) + Math.abs(dy);
+    if (start) drift = Math.hypot(p.x - start.p.x, p.y - start.p.y);
+    if (longT && moved > 6) cancelLong();
 
     if (mode === 'view' || mode === 'pinch-img' || mode === 'pinch-obj') return pts.size >= 2 && twoFingerMove();
     if (mode === 'draw') return api.strokeStrip(p.x, p.y);
     if (mode === 'placeObj') return void api.moveObject(api.ghostObj(), p.x, p.y);
-    if (mode === 'obj') return void api.moveObject(start.obj, p.x, p.y, start.obj.y);
+    if (mode === 'obj') return void api.moveObject(start.obj, p.x, p.y, start.obj.y, start.grab);
     if (mode === 'sticker') return dragSticker(p);
     if (mode === 'lid') return dragLid(dx, dy);
 
-    // girar la vista
-    const kx = dx * .0068, ky = dy * .0058;
-    cam.theta -= kx;
-    cam.phi = clamp(cam.phi - ky, .16, Math.PI - .05);
-    cam.vTheta = -kx * 14; cam.vPhi = -ky * 14;      // para la inercia al soltar
+    // girar la vista: nada se mueve hasta salir de la zona muerta
+    if (!armed) {
+      if (drift < DEAD) return;
+      armed = true;
+    }
+    const kx = dx * ORBIT, ky = dy * ORBIT * .86;
+    cam.tTheta -= kx;
+    cam.tPhi = clamp(cam.tPhi - ky, .16, Math.PI - .05);
+    cam.vTheta = -kx * 12; cam.vPhi = -ky * 12;      // para la inercia al soltar
     api.spinOff();
   }
 
@@ -129,11 +150,11 @@ export function createInput(canvas, api) {
     if (mode === 'pinch-obj') {
       const o = gesture.obj;
       if (gesture.d > 8) {
-        o.scale = clamp(gesture.size * (d / gesture.d), .3, 3);
-        o.rot = gesture.rot + (a - gesture.a);
+        const f = clamp(d / gesture.d, .2, 6);
+        for (const k of ['x', 'y', 'z']) o.scl[k] = clamp(gesture.scl[k] * f, .2, 4);
+        api.setObjRot(o, { ...gesture.rot, y: gesture.rot.y + (a - gesture.a) });
         api.clampObject(o);
       }
-      gesture.d = d; gesture.a = a; gesture.c = c;
       return api.redraw();
     }
     if (mode === 'pinch-img') {
@@ -145,8 +166,9 @@ export function createInput(canvas, api) {
         api.touch(s);
       }
     } else {
-      if (gesture.d > 8 && d > 8) cam.zoom = clamp(cam.zoom * (gesture.d / d), cam.min, cam.max);
-      api.pan(c.x - gesture.c.x, c.y - gesture.c.y);   // desplazar la vista con dos dedos
+      if (gesture.d > 8 && d > 8) cam.tZoom = clamp(cam.tZoom * (gesture.d / d), cam.min, cam.max);
+      cam.tTheta -= (a - gesture.a) * .8;                // girar con dos dedos
+      api.pan(c.x - gesture.c.x, c.y - gesture.c.y);     // desplazar la vista
     }
     gesture.d = d; gesture.a = a; gesture.c = c;
     api.redraw();
@@ -175,6 +197,10 @@ export function createInput(canvas, api) {
     const c = api.camera();
     const k = 2 * Math.tan(.36) * cam.dist / canvas.clientHeight / S;   // px → cm
     const l = api.state.lid, d = api.state.dims;
+    if (api.lidHinged()) {                              // con bisagra solo se abre y se cierra
+      l.y = clamp(l.y - dy * k, 0, 16);
+      return api.redraw();
+    }
     l.x += dx * k * c.right.x;
     l.z += dx * k * c.right.z;
     l.y -= dy * k;
@@ -188,19 +214,21 @@ export function createInput(canvas, api) {
   function up(e) {
     pts.delete(e.pointerId);
     const wasMode = mode;
+    const wasLong = longFired;
     const quick = performance.now() - t0 < 380;
+    cancelLong();
 
     if (wasMode === 'sticker') { api.scene.dirty(api.getSticker(start.grab.id)?.face); api.hover(null); }
     if (['sticker', 'lid', 'pinch-img', 'obj', 'pinch-obj'].includes(wasMode)) api.commit();
     if (wasMode === 'placeObj' && moved > TAP) { api.dropObject(); mode = null; pts.clear(); return; }
-    if (moved < TAP && quick && ['orbit', 'sticker', 'lid', 'obj', 'placeObj', 'draw'].includes(wasMode)) tap();
+    if (moved < TAP && quick && !wasLong && ['orbit', 'sticker', 'lid', 'obj', 'placeObj', 'draw'].includes(wasMode)) tap();
 
     if (pts.size === 0) {
       mode = null;
-      if (wasMode !== 'orbit') { cam.vTheta = cam.vPhi = 0; }
+      if (wasMode !== 'orbit' || !armed) { cam.vTheta = cam.vPhi = 0; }
       api.redraw();
     } else if (pts.size === 1) {
-      mode = 'orbit'; moved = 999;                    // al levantar un dedo no se interpreta como toque
+      mode = 'orbit'; moved = 999; armed = false;      // al levantar un dedo no se interpreta como toque
       cam.vTheta = cam.vPhi = 0;
     }
   }
@@ -209,8 +237,8 @@ export function createInput(canvas, api) {
   function tap() {
     if (api.state.placingObj) { api.dropObject(); return; }
     if (api.state.drawing) return;
-    if (start?.obj) {                                  // interruptor: cambia de modo al tocarlo
-      if (api.isSwitch(start.obj)) api.cycleSwitch(start.obj);
+    if (start?.obj) {                                  // interruptor y pilas: cambian de modo al tocarlos
+      if (api.isSource(start.obj)) api.cycleSwitch(start.obj);
       return;
     }
     const hit = start?.hit;
@@ -234,7 +262,7 @@ export function createInput(canvas, api) {
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    cam.zoom = clamp(cam.zoom * (1 + Math.sign(e.deltaY) * .12), cam.min, cam.max);
+    cam.tZoom = clamp(cam.tZoom * (1 + Math.sign(e.deltaY) * .12), cam.min, cam.max);
     api.redraw();
   }, { passive: false });
 

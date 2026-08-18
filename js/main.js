@@ -7,11 +7,14 @@ import { createOverlay } from './app/overlay.js';
 import { removeBackground } from './features/removebg.js';
 import { audio } from './features/audio.js';
 import * as fx from './features/fx.js';
-import { extent, faceLabel, faceShort, lidHalf, S, LIMITS } from './box/model.js';
+import { extent, faceLabel, faceShort, lidHalf, isHinged, lidAngle, S, LIMITS } from './box/model.js';
 import { clamp, damp, v3, rayPlane } from './core/math3d.js';
 import * as store from './app/store.js';
-import { CATALOG } from './objects/catalog.js';
-import { clampObject, hasAnimation, MODES, MODE_NAME, stripCenter } from './app/objects.js';
+import { CATALOG, defaultsFor } from './objects/catalog.js';
+import {
+  clampObject, hasAnimation, applyRot, resetTransform, normalize,
+  MODES, MODE_NAME, isSource, isStrip, isSwitch, isPower, canLink, wiring,
+} from './app/objects.js';
 
 const { state, images } = store;
 const canvas = document.getElementById('scene');
@@ -27,7 +30,12 @@ try {
 const scene = createScene(renderer);
 // zoom relativo al tamaño de la caja: al cambiar las medidas el encuadre se mantiene
 const VIEW = { theta: -.68, phi: 1.02, zoom: 2.4 };
-const cam = { ...VIEW, min: 1.1, max: 5, dist: 2, vTheta: 0, vPhi: 0, target: v3(0, .3, 0), pan: v3(0, 0, 0) };
+const cam = {
+  ...VIEW,
+  tTheta: VIEW.theta, tPhi: VIEW.phi, tZoom: VIEW.zoom,   // destino suavizado
+  min: 1.1, max: 5, dist: 2, vTheta: 0, vPhi: 0,
+  target: v3(0, .3, 0), pan: v3(0, 0, 0),
+};
 let redraw = true;
 
 // entrada: la caja crece suavemente al abrir
@@ -86,7 +94,7 @@ function surfacePoint(px, py) {
   const hit = scene.pick(ro, rd, { skipPlain: true, skipXray: true });
   const d = state.dims, t = d.grosor;
   let p = null;
-  if (hit && hit.face.side === 'in') {                      // paredes o fondo interiores
+  if (hit && hit.face.side[0] === 'i') {                    // paredes o fondo interiores
     const o = .9;                                           // cm de separación
     p = {
       x: (ro.x + rd.x * hit.t) / S + hit.face.n.x * o,
@@ -109,10 +117,17 @@ function surfacePoint(px, py) {
 const sel = () => store.getSticker(state.selected);
 const selObj = () => store.getObject(state.object);
 const ghostObj = () => (state.placingObj ? store.getObject(state.placingObj) : null);
-const touchObj = () => { redraw = true; };
 const ghost = () => (state.placing ? store.getSticker(state.placing) : null);
 const faceOf = s => s && scene.faceById(s.face);
 const touch = s => { if (s) { scene.dirty(s.face); redraw = true; } };
+
+/** Escribe una propiedad admitiendo rutas («rot.x», «scl.z»). */
+function setPath(o, path, v) {
+  const p = path.split('.');
+  let t = o;
+  while (p.length > 1) t = t[p.shift()];
+  t[p[0]] = v;
+}
 
 /** Mantiene la imagen dentro de su superficie (si cabe); si no, la centra. */
 function clampSticker(s, face = faceOf(s)) {
@@ -134,8 +149,17 @@ function fitSticker(s, face, coverage = .55) {
   s.size = Math.min(coverage, (face.vLen * coverage) / (face.uLen * ar));
 }
 
+/** ¿Qué caras alcanza el forro según el ámbito elegido? */
+const SCOPES = {
+  all: () => true,
+  ext: f => f.part === 'box' && f.side[0] === 'o',
+  int: f => f.side[0] === 'i' && f.part === 'box',
+  tapa: f => f.part === 'lid',
+  div: f => f.id.includes('.div'),
+};
+
 const app = {
-  // ---- medidas ----
+  // ---- medidas y diseño ----
   setDim(k, v) {
     const [min, max] = LIMITS[k];
     state.dims[k] = clamp(+v.toFixed(2), min, max);
@@ -144,6 +168,17 @@ const app = {
     redraw = true;
   },
   setDims(d) { Object.assign(state.dims, d); redraw = true; },
+  setDesign(id) {
+    state.design = id;
+    if (id === 'abierta' || isHinged(id)) state.lid = { x: 0, y: state.lid.y > 0 ? state.lid.y : 0, z: 0 };
+    state.lidPicked = false;
+    scene.markAll(); store.commit(); ui.sync(); redraw = true;
+    audio.play('lidOpen');
+  },
+  setDivisions(n) {
+    state.divisions = clamp(Math.round(n), 2, 4);
+    scene.markAll(); redraw = true;
+  },
   setMaterial(id) { state.material = id; store.emit('material'); store.commit(); audio.play('select'); redraw = true; },
   setOption(k, v) {
     state[k] = v;
@@ -155,10 +190,12 @@ const app = {
   // ---- tapa ----
   lid(action) {
     const d = state.dims;
-    if (action === 'open') state.lid = { x: 0, y: d.alto * .55 + 6, z: 0 };
+    if (isHinged(state.design)) {
+      state.lid = { x: 0, y: action === 'close' ? 0 : 14, z: 0 };
+    } else if (action === 'open') state.lid = { x: 0, y: d.alto * .55 + 6, z: 0 };
     else if (action === 'aside') state.lid = { x: d.ancho / 2 + lidHalf(d) + 3, y: -(d.alto - d.tapa), z: 0 };
     else state.lid = { x: 0, y: 0, z: 0 };
-    audio.play(action === 'open' || action === 'aside' ? 'lidOpen' : 'lidClose');
+    audio.play(action === 'close' ? 'lidClose' : 'lidOpen');
     store.commit(); ui.sync(); redraw = true;
     ui.toast(action === 'open' ? 'Tapa abierta' : action === 'aside' ? 'Tapa separada' : 'Tapa colocada');
   },
@@ -168,6 +205,7 @@ const app = {
     ui.sync(); redraw = true;
     ui.toast(state.lidPicked ? 'Arrastra la tapa para moverla' : 'Tapa fijada');
   },
+  lidHinged: () => isHinged(state.design),
 
   // ---- imágenes: colocación guiada ----
   async addImage(src) {
@@ -285,7 +323,7 @@ const app = {
     return { name: faceShort(f), lid: f.part === 'lid' && !s && !state.hover };
   },
 
-  // ---- transformar ----
+  // ---- transformar imagen ----
   fit() {
     const s = sel(); if (!s) return;
     s.rot = 0; s.ratio = 1;
@@ -348,14 +386,14 @@ const app = {
 
   addObject(type) {
     const def = CATALOG[type];
-    if (!def) return;
+    if (!def || def.tool) return;
     app.cancelObject();
     app.select(null);
     const o = store.newObject({
       type, color: def.color, ghost: true,
       y: state.dims.grosor, z: 0, x: 0,
-      ...(def.params ? { pw: 1.6, ph: 6, pt: .12 } : {}),
-      ...(def.switch ? { mode: 'off' } : {}),
+      ...defaultsFor(type),
+      ...(isSource({ type }) ? { mode: def.power ? 'warm' : 'off', hue: '#ffb463', power: 1, blink: 1.4 } : {}),
     });
     state.objects.push(o);
     state.placingObj = o.id;
@@ -366,11 +404,13 @@ const app = {
     ui.sync(); redraw = true;
   },
 
-  /** Mueve el objeto fantasma bajo el dedo (o el objeto ya colocado). */
-  moveObject(o, px, py, planeY = null) {
+  /** Mueve el objeto bajo el dedo; `grab` conserva la distancia al punto agarrado. */
+  moveObject(o, px, py, planeY = null, grab = null) {
+    if (!o) return false;
     const p = spotAt(px, py, planeY);
     if (!p) return false;
-    o.x = p.x; o.z = p.z;
+    o.x = p.x + (grab?.x || 0);
+    o.z = p.z + (grab?.z || 0);
     if (planeY === null) o.y = Math.max(state.dims.grosor, p.y);
     clampObject(o, state.dims, scene.meshOf(o));
     redraw = true;
@@ -388,6 +428,7 @@ const app = {
     if (c) fx.ring(c.x, c.y, 'ok');
     audio.play('place');
     store.commit(); ui.sync(); redraw = true;
+    if (state.repeat) { app.addObject(g.type); ui.toast('Otro más · toca para colocarlo'); return; }
     ui.toast(`${CATALOG[g.type].name} · arrástralo para moverlo`);
   },
 
@@ -407,12 +448,39 @@ const app = {
     ui.sync(); redraw = true;
   },
   selectedObject: selObj,
+  openObject() { if (selObj()) ui.open('obj'); },
 
   objSet(k, v) {
     const o = selObj(); if (!o) return;
-    o[k] = v;
+    normalize(o);
+    setPath(o, k, v);
+    if (k.startsWith('rot')) applyRot(o, o.rot, state.rotMode);
     clampObject(o, state.dims, scene.meshOf(o));
     redraw = true;
+  },
+  /** Escala uniforme: mueve los tres ejes conservando su proporción. */
+  objScale(v) {
+    const o = selObj(); if (!o) return;
+    normalize(o);
+    const m = (o.scl.x + o.scl.y + o.scl.z) / 3 || 1;
+    for (const k of ['x', 'y', 'z']) o.scl[k] = clamp(o.scl[k] * (v / m), .2, 4);
+    clampObject(o, state.dims, scene.meshOf(o));
+    redraw = true;
+  },
+  setObjRot(o, rot) { applyRot(o, rot, state.rotMode); redraw = true; },
+  setRotMode(m) {
+    state.rotMode = m;
+    const o = selObj();
+    if (o) applyRot(o, o.rot, m);
+    audio.play('toggle'); ui.sync(); redraw = true;
+    ui.toast(m === 'libre' ? 'Giro libre' : m === 'asistida' ? 'Giro asistido: se mantiene derecho' : 'Giro simétrico de 15°');
+  },
+  resetObject(what) {
+    const o = selObj(); if (!o) return;
+    resetTransform(o, what);
+    clampObject(o, state.dims, scene.meshOf(o));
+    audio.play('success'); store.commit(); ui.sync(); redraw = true;
+    ui.toast(what === 'rot' ? 'Giro restablecido' : what === 'scl' ? 'Tamaño restablecido' : 'Objeto restablecido');
   },
   objColor(hex) {
     const o = selObj(); if (!o) return;
@@ -439,6 +507,7 @@ const app = {
     state.objects.push(c);
     state.object = c.id;
     audio.play('place'); store.commit(); ui.sync(); redraw = true;
+    ui.toast('Copia creada');
   },
   lockObject() {
     const o = selObj(); if (!o) return;
@@ -463,7 +532,7 @@ const app = {
   startStrip() {
     app.select(null); app.selectObject(null);
     state.drawing = { path: [], color: '#fff3d6', thick: .5 };
-    ui.bar({ title: 'Dibuja la tira de luces', hint: 'desliza el dedo por el interior', ok: 'Listo' },
+    ui.bar({ title: 'Dibuja la tira de luces', hint: 'se forma bajo tu dedo', ok: 'Listo' },
       () => app.endStrip(true), () => app.endStrip(false));
     audio.play('whoosh'); ui.sync(); redraw = true;
   },
@@ -472,7 +541,7 @@ const app = {
     const p = surfacePoint(px, py);
     if (!p) return;
     const last = d.path[d.path.length - 1];
-    if (last && Math.hypot(p.x - last[0], p.y - last[1], p.z - last[2]) < 1.4) return;
+    if (last && Math.hypot(p.x - last[0], p.y - last[1], p.z - last[2]) < 1.1) return;
     d.path.push([p.x, p.y, p.z]);
     if (d.path.length % 3 === 0) audio.play('tick');
     redraw = true;
@@ -482,12 +551,13 @@ const app = {
     state.drawing = null;
     ui.bar(null);
     if (keep && d && d.path.length > 2) {
-      const o = store.newObject({ type: 'tira', path: d.path, color: d.color, thick: d.thick, mode: 'warm' });
+      // nace apagada: sin fuente de energía no puede encender
+      const o = store.newObject({ type: 'tira', path: d.path, color: d.color, thick: d.thick });
       state.objects.push(o);
       state.object = o.id;
       audio.play('success'); fx.flash();
       store.commit();
-      ui.toast('Tira de luces creada · conéctala a un interruptor');
+      ui.toast('Conecta un interruptor o una caja de pilas para encenderla');
     } else if (keep) {
       audio.play('error');
       ui.toast('Traza un recorrido más largo');
@@ -495,38 +565,60 @@ const app = {
     ui.sync(); redraw = true;
   },
 
-  // ---- interruptor y conexiones ----
+  // ---- interruptores, pilas y conexiones ----
   cycleSwitch(o) {
     o.mode = MODES[(MODES.indexOf(o.mode || 'off') + 1) % MODES.length];
-    audio.play(o.mode === 'off' ? 'toggle' : 'success');
-    ui.toast(MODE_NAME[o.mode]);
+    audio.play(o.mode === 'off' ? 'toggle' : 'light');
+    ui.toast(`${isPower(o) ? 'Pilas' : 'Interruptor'}: ${MODE_NAME[o.mode]}`);
     store.commit(); ui.sync(); redraw = true;
   },
   setSwitchMode(m) {
     const o = selObj(); if (!o) return;
-    o.mode = m; audio.play('toggle'); store.commit(); redraw = true;
+    o.mode = m;
+    audio.play(m === 'off' ? 'toggle' : 'light');
+    store.commit(); ui.sync(); redraw = true;
+  },
+  setLight(k, v) {
+    const o = selObj(); if (!o) return;
+    o[k] = v;
+    if (k !== 'blink' && (o.mode || 'off') === 'off') o.mode = 'custom';
+    redraw = true;
   },
   startLink() {
     const o = selObj(); if (!o) return;
     state.linking = o.id;
     ui.open(null);
-    ui.bar({ title: 'Toca una tira de luces', hint: 'para conectarla a este interruptor', ok: 'Terminar' },
-      () => { state.linking = null; ui.bar(null); ui.sync(); }, () => { state.linking = null; ui.bar(null); ui.sync(); });
+    const what = isPower(o) ? 'un interruptor o una tira' : 'una tira de luces';
+    ui.bar({ title: `Toca ${what}`, hint: 'para conectarlo · tócalo otra vez para quitarlo', ok: 'Terminar' },
+      () => app.endLink(), () => app.endLink());
     ui.sync(); redraw = true;
   },
+  endLink() { state.linking = null; ui.bar(null); ui.sync(); redraw = true; },
   linkTo(id) {
-    const sw = store.getObject(state.linking), target = store.getObject(id);
-    if (!sw || !target || target.type !== 'tira') { audio.play('error'); ui.toast('Elige una tira de luces'); return; }
-    const list = state.links[sw.id] || (state.links[sw.id] = []);
+    const src = store.getObject(state.linking), target = store.getObject(id);
+    if (!canLink(src, target)) {
+      audio.play('error');
+      ui.toast(isPower(src) ? 'Conéctalo a un interruptor o a una tira' : 'Un interruptor solo alimenta tiras');
+      return;
+    }
+    const list = state.links[src.id] || (state.links[src.id] = []);
     const i = list.indexOf(id);
     if (i >= 0) { list.splice(i, 1); ui.toast('Conexión eliminada'); }
-    else { list.push(id); ui.toast('Tira conectada · toca el interruptor para encenderla'); }
+    else { list.push(id); ui.toast('Conectado · enciéndelo desde su panel'); }
     audio.play('success');
     state.linking = null;                     // una conexión por vez: sin toques accidentales
-    state.object = sw.id;
+    state.object = src.id;
     ui.bar(null);
     store.commit(); ui.sync(); redraw = true;
   },
+  unlinkAll() {
+    const o = selObj(); if (!o) return;
+    delete state.links[o.id];
+    for (const k in state.links) state.links[k] = state.links[k].filter(id => id !== o.id);
+    audio.play('remove'); store.commit(); ui.sync(); redraw = true;
+    ui.toast('Conexiones quitadas');
+  },
+  wiringOf(o) { return wiring(o, state.objects, state.links); },
 
   // ---- forrar cartón ----
   setLining(patch) {
@@ -536,11 +628,13 @@ const app = {
     state.lining[id] = { ...cur, ...patch };
     scene.dirty(id); store.commit(); redraw = true;
   },
-  liningAll() {
+  liningScope(scope) {
     const cur = state.lining[state.face] || { color: '#f2a5b8', finish: 'papel' };
-    for (const f of scene.faces) state.lining[f.id] = { ...cur };
-    scene.markAll(); audio.play('success'); store.commit(); redraw = true;
-    ui.toast('Toda la caja forrada');
+    const match = SCOPES[scope] || SCOPES.all;
+    let n = 0;
+    for (const f of scene.faces) if (match(f)) { state.lining[f.id] = { ...cur }; n++; }
+    scene.markAll(); audio.play(n ? 'success' : 'error'); store.commit(); redraw = true;
+    ui.toast(n ? `Forradas ${n} superficies` : 'Ese diseño no tiene esa parte');
   },
   clearLining() {
     if (state.face) delete state.lining[state.face];
@@ -564,7 +658,9 @@ const app = {
     cam.pan.z = clamp(cam.pan.z - (c.right.z * dx - c.up.z * dy) * k, -lim, lim);
   },
   resetView() {
-    Object.assign(cam, { theta: VIEW.theta, phi: VIEW.phi, zoom: VIEW.zoom, vTheta: 0, vPhi: 0 });
+    Object.assign(cam, {
+      tTheta: VIEW.theta, tPhi: VIEW.phi, tZoom: VIEW.zoom, vTheta: 0, vPhi: 0,
+    });
     cam.pan = v3(0, 0, 0);
     redraw = true; audio.play('whoosh'); ui.toast('Vista centrada');
   },
@@ -585,7 +681,7 @@ const app = {
   state, scene, cam, camera, surfaceAt, planeAt, touch, clampSticker,
   spotAt, ghostObj, getObject: store.getObject,
   clampObject: o => clampObject(o, state.dims, scene.meshOf(o)),
-  isSwitch: o => !!CATALOG[o.type]?.switch,
+  isSource, isSwitch, isPower, isStrip,
   selected: sel, ghost, getSticker: store.getSticker,
   redraw: () => { redraw = true; },
   toast: m => ui.toast(m),
@@ -610,26 +706,39 @@ function frame(now) {
   clock += dt;
   if (hasAnimation(state.objects, state.links) && now - lastGlow > 48) { lastGlow = now; redraw = true; }
 
-  if (state.spin) { cam.theta += dt * .28; redraw = true; }
+  if (state.spin) { cam.tTheta += dt * .28; redraw = true; }
   else if (Math.abs(cam.vTheta) > 1e-4 || Math.abs(cam.vPhi) > 1e-4) {   // inercia al soltar
-    cam.theta += cam.vTheta * dt;
-    cam.phi = clamp(cam.phi + cam.vPhi * dt, .16, Math.PI - .05);
+    cam.tTheta += cam.vTheta * dt;
+    cam.tPhi = clamp(cam.tPhi + cam.vPhi * dt, .16, Math.PI - .05);
     const k = Math.exp(-4.5 * dt);
     cam.vTheta *= k; cam.vPhi *= k;
     if (Math.abs(cam.vTheta) < 1e-3) cam.vTheta = 0;
     if (Math.abs(cam.vPhi) < 1e-3) cam.vPhi = 0;
-    redraw = true;
+  }
+
+  // la cámara persigue su destino: el movimiento nunca es brusco
+  const camGap = Math.abs(cam.theta - cam.tTheta) + Math.abs(cam.phi - cam.tPhi) + Math.abs(cam.zoom - cam.tZoom);
+  if (camGap > 1e-4) {
+    cam.theta = damp(cam.theta, cam.tTheta, 22, dt);
+    cam.phi = damp(cam.phi, cam.tPhi, 22, dt);
+    cam.zoom = damp(cam.zoom, cam.tZoom, 18, dt);
+  } else {
+    cam.theta = cam.tTheta; cam.phi = cam.tPhi; cam.zoom = cam.tZoom;
   }
 
   const a = scene.anim;
   const d = state.dims;
-  const lift = Math.max(0, a.ly) * S;
+  // al abrirse, la tapa con bisagra sube en arco: el encuadre la sigue
+  const lift = isHinged(state.design)
+    ? Math.sin(lidAngle(a.ly)) * (a.largo * .55 + a.tapa) * S
+    : Math.max(0, a.ly) * S;
   const want = v3(
     a.lx * S * .45 + cam.pan.x,
     (a.alto * .5) * S + lift * .35 + cam.pan.y,
     a.lz * S * .45 + cam.pan.z,
   );
   const moving = !scene.settled()
+    || camGap > 1e-4
     || ['largo', 'ancho', 'alto', 'tapa', 'grosor'].some(k => a[k] !== d[k])
     || a.lx !== state.lid.x || a.ly !== state.lid.y || a.lz !== state.lid.z
     || ['x', 'y', 'z'].some(k => Math.abs(cam.target[k] - want[k]) > 1e-4);
@@ -662,7 +771,7 @@ function frame(now) {
 }
 
 // gancho de depuración opcional: abre la página con #dev
-if (location.hash.includes('dev')) window.__cajas = { scene, cam, camera, state, renderer, app };
+if (location.hash.includes('dev')) window.__cajas = { scene, cam, camera, state, renderer, app, input };
 
 const hint = document.getElementById('hint');
 setTimeout(() => hint.remove(), 5200);

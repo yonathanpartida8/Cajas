@@ -111,23 +111,66 @@
   <h2>Añadir a la caja</h2>
   <div class="chips scroll" id="libCats"></div>
   <div class="lib" id="libGrid"></div>
+  <label class="opt"><span><i class="ic ic-copy"></i>Colocar varios seguidos</span><input type="checkbox" data-mute id="optRepeat"></label>
 </section>
 
 <section class="sheet" id="sheet-obj" hidden>
   <div class="grab"></div>
   <h2 id="objTitle">Objeto</h2>
-  <h3>Color</h3>
-  <div class="swatches wrap" id="objColors"></div>
-  <div id="objParams"></div>
-  <div class="grid2">
-    <button class="wide soft" id="objCenter"><i class="ic ic-center"></i>Centrar</button>
-    <button class="wide soft" id="objFloor"><i class="ic ic-lid-place"></i>Al fondo</button>
+  <div class="chips" id="objTabs">
+    <button class="chip on" data-tab="basico"><span class="em">🎨</span>Aspecto</button>
+    <button class="chip" data-tab="mover"><span class="em">✥</span>Mover</button>
+    <button class="chip" data-tab="girar"><span class="em">↻</span>Girar</button>
+    <button class="chip" data-tab="tam"><span class="em">⤢</span>Tamaño</button>
+    <button class="chip" data-tab="luz" id="tabLuz" hidden><span class="em">💡</span>Luz</button>
   </div>
-  <div id="objSwitch" hidden>
-    <h3>Interruptor</h3>
-    <div class="chips" id="modeChips"></div>
-    <button class="wide soft" id="btnLink"><i class="ic ic-link"></i>Conectar con una tira</button>
-    <p class="tip" id="linkInfo"></p>
+
+  <div data-panel="basico">
+    <h3>Color</h3>
+    <div class="swatches wrap" id="objColors"></div>
+    <div id="objParams"></div>
+    <div class="grid2">
+      <button class="wide soft" id="objCenter"><i class="ic ic-center"></i>Centrar</button>
+      <button class="wide soft" id="objFloor"><i class="ic ic-lid-place"></i>Al fondo</button>
+    </div>
+    <div class="grid2">
+      <button class="wide soft" id="objCopy2"><i class="ic ic-copy"></i>Duplicar</button>
+      <button class="wide soft" id="objLock2"><i class="ic ic-lock"></i>Fijar</button>
+    </div>
+  </div>
+
+  <div data-panel="mover" hidden>
+    <div id="objPos"></div>
+    <button class="wide soft" data-reset="pos"><i class="ic ic-undo"></i>Restablecer posición</button>
+  </div>
+
+  <div data-panel="girar" hidden>
+    <h3>Modo de giro</h3>
+    <div class="chips" id="rotModes"></div>
+    <p class="tip left" id="rotHint"></p>
+    <div id="objRot"></div>
+    <button class="wide soft" data-reset="rot"><i class="ic ic-undo"></i>Restablecer giro</button>
+  </div>
+
+  <div data-panel="tam" hidden>
+    <div id="objScl"></div>
+    <button class="wide soft" data-reset="scl"><i class="ic ic-undo"></i>Restablecer tamaño</button>
+  </div>
+
+  <div data-panel="luz" hidden>
+    <h3 id="modeTitle">Modo de luz</h3>
+    <div class="chips wrap" id="modeChips"></div>
+    <div id="customLight" hidden>
+      <h3>A mi gusto</h3>
+      <div class="swatches wrap" id="lightColors"></div>
+      <div id="lightParams"></div>
+    </div>
+    <h3>Conexiones</h3>
+    <p class="tip left" id="linkInfo"></p>
+    <div class="grid2">
+      <button class="wide soft" id="btnLink"><i class="ic ic-link"></i>Conectar</button>
+      <button class="wide soft" id="btnUnlink"><i class="ic ic-unlink"></i>Desconectar</button>
+    </div>
   </div>
 </section>
 
@@ -139,15 +182,24 @@
   <div class="swatches wrap" id="forroColors"></div>
   <h3>Acabado</h3>
   <div class="chips scroll" id="forroFinish"></div>
-  <div class="grid2">
-    <button class="wide soft" id="forroAll"><i class="ic ic-box"></i>Toda la caja</button>
-    <button class="wide soft" id="forroClear"><i class="ic ic-undo"></i>Quitar forro</button>
+  <h3>Aplicar a…</h3>
+  <div class="chips wrap" id="forroScope">
+    <button class="chip" data-scope="all">Toda la caja</button>
+    <button class="chip" data-scope="ext">Exterior</button>
+    <button class="chip" data-scope="int">Interior</button>
+    <button class="chip" data-scope="tapa">Tapa</button>
+    <button class="chip" data-scope="div">Compartimentos</button>
   </div>
+  <button class="wide soft" id="forroClear"><i class="ic ic-undo"></i>Quitar forro</button>
 </section>
 
 <section class="sheet" id="sheet-box" hidden>
   <div class="grab"></div>
   <h2>Caja y tapa</h2>
+  <h3>Diseño</h3>
+  <div class="lib" id="designGrid"></div>
+  <div id="divRow" hidden></div>
+  <h3>Tapa</h3>
   <div class="grid4">
     <button class="tile" data-mute data-lid="open"><i class="ic ic-lid-open"></i><span>Abrir</span></button>
     <button class="tile" data-mute data-lid="close"><i class="ic ic-lid-close"></i><span>Cerrar</span></button>

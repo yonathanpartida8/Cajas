@@ -1,5 +1,12 @@
 // Biblioteca de objetos 3D. Añadir uno nuevo = añadir una entrada aquí:
-// el resto de la app (colocación, controles, color, duplicar…) funciona sola.
+// el resto de la app (colocación, transformación, color, duplicar, conectar…)
+// funciona sola. Los campos opcionales activan capacidades:
+//
+//   props   → controles numéricos propios (se generan solos en su panel)
+//   light   → emite luz puntual (velas)
+//   switch  → es un interruptor: enciende lo que tenga conectado
+//   power   → es una fuente de energía (caja de pilas)
+//   tool    → no es un objeto que se coloque, sino una herramienta del dock
 import { mesh, pack, box, ball, tube, ring, extrude, ribbon, heartPath, starPath } from './shapes.js';
 
 export const CATEGORIES = [
@@ -15,6 +22,7 @@ export const CATEGORIES = [
 ];
 
 const CREAM = '#f6e7cf', DARK = '#3a2a20', GREEN = '#5f8a4a', GOLD = '#d8a24a';
+const TAU = Math.PI * 2;
 
 /** Aclara u oscurece un color hex. */
 export function shade(hex, k) {
@@ -22,6 +30,17 @@ export function shade(hex, k) {
   const f = v => Math.max(0, Math.min(255, Math.round(v * k)));
   return '#' + [f(n >> 16), f((n >> 8) & 255), f(n & 255)]
     .map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+/** Aleatorio reproducible: la misma malla se reconstruye siempre igual. */
+function rng(seed) {
+  let a = (seed | 0) + 0x6d2b79f5;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 /** Cada objeto se construye en centímetros, a su tamaño natural. */
@@ -91,7 +110,7 @@ export const CATALOG = {
         ball(M, { x: s * .95, y: 3.6, ax: 1.15, ay: .12, az: .5, color: GREEN, mix: 0, seg: 8, rz: s * .3, ry: s * .5 });
       }
       for (let i = 0; i < 6; i++) {
-        const a = i / 6 * Math.PI * 2;
+        const a = i / 6 * TAU;
         ball(M, {
           x: Math.cos(a) * .8, z: Math.sin(a) * .8, y: 7.6,
           ax: .95, ay: 1.2, az: .4, ry: -a, seg: 9,
@@ -108,7 +127,7 @@ export const CATALOG = {
       const M = mesh(), c = o.color;
       tube(M, { r: .2, h: 6, y: 3, color: GREEN, mix: 0, seg: 8 });
       for (let i = 0; i < 7; i++) {
-        const a = i / 7 * Math.PI * 2;
+        const a = i / 7 * TAU;
         ball(M, { x: Math.cos(a) * 1.25, z: Math.sin(a) * 1.25, y: 6.4, ax: 1.05, ay: .3, az: .68, ry: -a, color: c, seg: 9 });
       }
       ball(M, { y: 6.62, ax: .72, ay: .5, az: .72, color: GOLD, mix: 0, seg: 10 });
@@ -149,28 +168,99 @@ export const CATALOG = {
       return pack(M);
     },
   },
+
+  // ---------------------------------------------------------------- relleno
   papel: {
-    name: 'Papel picado', emoji: '🎊', cat: 'deco', color: '#ffffff', params: true,
-    build: o => pack(ribbon(mesh(), {
-      w: o.pw ?? 1.6, h: o.ph ?? 6, d: (o.pt ?? .12) / 2,
-      twist: 3.2, seg: 12, color: o.color, y: (o.ph ?? 6) / 2,
-    })),
+    name: 'Papel picado', emoji: '🎊', cat: 'deco', color: '#ffffff',
+    props: [
+      { k: 'count', label: 'Cantidad', hint: 'trozos de papel', min: 1, max: 48, step: 1, def: 14, unit: '' },
+      { k: 'pw', label: 'Anchura', hint: 'de cada tira', min: .3, max: 4, step: .1, def: .9 },
+      { k: 'ph', label: 'Altura', hint: 'largo de la tira', min: 1.5, max: 20, step: .5, def: 7 },
+      { k: 'pt', label: 'Grosor', hint: 'del papel', min: .02, max: .6, step: .02, def: .08 },
+      { k: 'spread', label: 'Reparto', hint: 'cuánto se esparce', min: 0, max: 14, step: .5, def: 4 },
+    ],
+    // Virutas rizadas como las del relleno de verdad: tiras finas, largas y
+    // enredadas, cada una con su propio giro y su sitio dentro del montón.
+    build: o => {
+      const M = mesh();
+      const n = Math.round(o.count ?? 14);
+      const w = o.pw ?? .9, h = o.ph ?? 7, d = (o.pt ?? .08) / 2, sp = o.spread ?? 4;
+      const r = rng(n * 977 + Math.round(w * 100) * 31 + Math.round(h * 10) * 7 + Math.round(sp * 10));
+      for (let i = 0; i < n; i++) {
+        const a = r() * TAU, rad = Math.sqrt(r()) * sp;
+        const len = h * (.6 + r() * .8);
+        ribbon(M, {
+          w, h: len, d, twist: 2 + r() * 4, seg: 7,
+          color: i % 3 === 0 ? shade(o.color, .92) : (i % 5 === 0 ? shade(o.color, 1.06) : o.color),
+          x: Math.cos(a) * rad, z: Math.sin(a) * rad,
+          y: d + w * .5 + r() * w * 1.6 + i * .015,
+          rx: Math.PI / 2 + (r() - .5) * 1.5,
+          ry: r() * TAU,
+          rz: (r() - .5) * 1.1,
+        });
+      }
+      return pack(M);
+    },
   },
+
+  // ---------------------------------------------------------------- eléctricos
   interruptor: {
     name: 'Interruptor', emoji: '🎚️', cat: 'luces', color: '#efe3cf', switch: true,
     build: o => {
       const M = mesh(), c = o.color;
-      box(M, { w: 3.4, h: 1, d: 2.6, y: .5, color: c });
-      box(M, { w: 2.5, h: .5, d: 1.8, y: 1.2, color: shade(c, .93) });
-      box(M, { w: 1, h: 1.4, d: .8, y: 1.95, z: .12, rx: -.3, color: shade(c, .78) });
-      ball(M, { x: 1.2, y: 1.5, z: .5, r: .26, color: '#ffffff', mix: 0, emi: 1, seg: 8 });
+      box(M, { w: 3, h: .9, d: 2.2, y: .45, color: c });
+      box(M, { w: 2.2, h: .45, d: 1.5, y: 1.08, color: shade(c, .93) });
+      box(M, { w: .85, h: 1.2, d: .7, y: 1.7, z: .1, rx: -.3, color: shade(c, .78) });
+      ball(M, { x: 1.05, y: 1.3, z: .42, r: .22, color: '#ffffff', mix: 0, emi: 1, seg: 8 });
       return pack(M);
     },
   },
+  pilas: {
+    name: 'Caja de pilas', emoji: '🔋', cat: 'luces', color: '#e9e2d4', power: true,
+    build: o => {
+      const M = mesh(), c = o.color;
+      const W = 5.2, D = 3.6, H = 1.6, t = .2;
+      box(M, { w: W, h: t, d: D, y: t / 2, color: c });                       // fondo
+      for (const s of [-1, 1]) {
+        box(M, { w: W, h: H, d: t, y: H / 2, z: s * (D / 2 - t / 2), color: c });
+        box(M, { w: t, h: H, d: D, x: s * (W / 2 - t / 2), y: H / 2, color: c });
+      }
+      for (let i = 0; i < 4; i++) {                                          // cuatro pilas
+        const x = -1.5 + i;
+        tube(M, { r: .42, h: 2.8, x, y: .68, rx: Math.PI / 2, color: '#4a4438', mix: 0, seg: 10 });
+        tube(M, { r: .44, h: .5, x, y: .68, z: -.9, rx: Math.PI / 2, color: '#c9a24a', mix: 0, seg: 10 });
+        tube(M, { r: .17, h: .28, x, y: .68, z: 1.52, rx: Math.PI / 2, color: '#c9a24a', mix: 0, seg: 8 });
+      }
+      box(M, { w: W - t * 2, h: .16, d: .5, y: H - .05, z: 0, color: shade(c, .88) });   // pletina
+      ball(M, { x: W / 2 - .5, y: H - .1, z: D / 2 - .35, r: .2, color: '#ffffff', mix: 0, emi: 1, seg: 8 });
+      return pack(M);
+    },
+  },
+
+  // ---------------------------------------------------------------- herramientas
+  tira: {
+    name: 'Tira de luces', emoji: '💡', cat: 'luces', color: '#fff3d6', tool: 'tira',
+    props: [
+      { k: 'thick', label: 'Grosor', hint: 'del cable y las luces', min: .2, max: 1.6, step: .1, def: .5 },
+    ],
+  },
+  __foto: { name: 'Foto', emoji: '🖼️', cat: 'fotos', tool: 'foto' },
+  __forro: { name: 'Forrar cartón', emoji: '🎨', cat: 'materiales', tool: 'forro' },
 };
+
+/** Controles numéricos propios de un tipo de objeto. */
+export const propsOf = type => CATALOG[type]?.props || [];
+
+/** Valores iniciales de esos controles. */
+export const defaultsFor = type =>
+  Object.fromEntries(propsOf(type).map(p => [p.k, p.def]));
 
 export const CATALOG_LIST = Object.entries(CATALOG).map(([id, o]) => ({ id, ...o }));
 
 /** Paleta romántica compartida por los selectores de color. */
 export const PALETTE = ['#ffffff', '#fbe3e8', '#f2a5b8', '#e0607f', '#d24a63', '#b3324f',
   '#f6d186', '#f2c14e', '#d8a24a', '#c08b52', '#9ec7a0', '#7fb0d8', '#b8a4e0', '#3a2a20'];
+
+/** Paleta específica de las luces (tonos que quedan bien encendidos). */
+export const LIGHT_PALETTE = ['#ffb463', '#ffe7c2', '#ffffff', '#ff8fa8', '#ff5f7e',
+  '#c58cff', '#7fb0ff', '#7fe6c8', '#ffe14f'];

@@ -21,10 +21,22 @@ export function addImage(src) {
 const defaults = () => Object.fromEntries(Object.keys(LIMITS).map(k => [k, LIMITS[k][2]]));
 
 let objSeq = 0;
-export const newObject = o => ({ id: 'o' + (++objSeq), x: 0, y: 0, z: 0, rot: 0, scale: 1, ...o });
+/** Todo objeto nace con la transformación completa: posición, giro y escala en 3 ejes. */
+export function newObject(o = {}) {
+  const r = typeof o.rot === 'number' ? { x: 0, y: o.rot, z: 0 } : o.rot;
+  const s = typeof o.scale === 'number' ? { x: o.scale, y: o.scale, z: o.scale } : o.scl;
+  return {
+    id: 'o' + (++objSeq), x: 0, y: 0, z: 0, ...o,
+    rot: { x: 0, y: 0, z: 0, ...r },
+    scl: { x: 1, y: 1, z: 1, ...s },
+  };
+}
 
 export const state = {
   dims: defaults(),            // largo, ancho, alto, tapa, grosor (cm)
+  design: 'clasica',           // diseño de caja elegido
+  divisions: 2,                // compartimentos (solo en ese diseño)
+  rotMode: 'libre',            // libre | asistida | simetrica
   material: 'kraft',
   lid: { x: 0, y: 0, z: 0 },   // desplazamiento objetivo de la tapa (cm)
   stickers: [],                // {id, face, u, v, size, ratio, rot, imgId, ghost?}
@@ -43,6 +55,7 @@ export const state = {
   drawing: null,               // tira de luces que se está dibujando
   linking: null,               // interruptor en modo "conectar"
   lineTool: null,              // herramienta activa (forrar, tira…)
+  repeat: false,               // seguir colocando el mismo objeto
   spin: false, shadow: true, hq: true, sound: true, buzz: true, xray: false,
 };
 
@@ -58,6 +71,7 @@ const past = [], future = [];
 const snap = () => JSON.stringify({
   d: state.dims, m: state.material, l: state.lid, s: realStickers(),
   o: realObjects(), k: state.links, f: state.lining,
+  g: state.design, v: state.divisions,
 });
 let last = snap();
 
@@ -77,9 +91,11 @@ function apply(str) {
   Object.assign(state.lid, o.l);
   state.material = o.m;
   state.stickers = o.s;
-  state.objects = o.o || [];
+  state.objects = (o.o || []).map(newObject);
   state.links = o.k || {};
   state.lining = o.f || {};
+  state.design = o.g || 'clasica';
+  state.divisions = o.v ?? 2;
   state.placing = null; state.hover = null; state.placingObj = null; state.drawing = null;
   if (!getSticker(state.selected)) state.selected = null;
   if (!getObject(state.object)) state.object = null;
@@ -94,6 +110,7 @@ export const canRedo = () => future.length > 0;
 
 export function resetAll() {
   state.dims = defaults();
+  state.design = 'clasica'; state.divisions = 2;
   state.material = 'kraft';
   state.lid = { x: 0, y: 0, z: 0 };
   state.stickers = [];

@@ -3,11 +3,15 @@ import { buildFaces, S } from '../box/model.js';
 import { paintFace, kraftCanvas, liningCanvas, shadowCanvas, frameCanvas, finishOf, MATERIALS, TILE } from '../box/materials.js';
 import { state, images, stickersOf, on } from './store.js';
 import { rayQuad, v3, add, scale, norm } from '../core/math3d.js';
-import { objectMesh, transform, collectLights, pickObject, objectCenter, stripMode, modeColor, hex2rgb } from './objects.js';
+import {
+  objectMesh, transform, collectLights, pickObject, objectCenter,
+  lightOf, lightConf, lightColor, buildStrip, isSource, hex2rgb,
+} from './objects.js';
 import { CATALOG } from '../objects/catalog.js';
 
 const MAXPX = 640;
 const ACCENT = '#d98232', OK = '#4f9d5d';
+const IDENTITY = transform({ x: 0, y: 0, z: 0 });   // trazos ya expresados en cm reales
 
 export function createScene(renderer) {
   const anim = { ...state.dims, lx: 0, ly: 0, lz: 0 };
@@ -15,8 +19,10 @@ export function createScene(renderer) {
   const krafts = new Map();          // material/forro → textura repetida
   const frames = new Map();          // color → textura de marco
   const dirty = new Set();
-  let faces = buildFaces(anim, { x: 0, y: 0, z: 0 });
+  const shape = () => ({ design: state.design, divisions: state.divisions });
+  let faces = buildFaces(anim, { x: 0, y: 0, z: 0 }, shape());
   let shadowTex = null;
+  let sketch = null;                 // malla temporal de la tira que se está dibujando
 
   const cached = (map, key, make, opts) => {
     if (!map.has(key)) map.set(key, renderer.texture(make(key), opts));
@@ -71,8 +77,8 @@ export function createScene(renderer) {
     vel[key] += (target - anim[key]) * k * dt;
     vel[key] *= Math.exp(-d * dt);
     anim[key] += vel[key] * dt;
-    // 0,01 cm es invisible: cortamos ahí para que la escena entre en reposo de verdad
-    if (Math.abs(target - anim[key]) < .01 && Math.abs(vel[key]) < .05) { anim[key] = target; vel[key] = 0; }
+    // 0,02 cm es invisible: cortamos ahí para que la escena entre en reposo de verdad
+    if (Math.abs(target - anim[key]) < .02 && Math.abs(vel[key]) < .15) { anim[key] = target; vel[key] = 0; }
   }
 
   /** Interpola medidas y tapa; reconstruye la geometría. */
@@ -87,7 +93,7 @@ export function createScene(renderer) {
       spring('ly', state.lid.y, h, k, d);
       spring('lz', state.lid.z, h, k, d);
     }
-    faces = buildFaces(anim, { x: anim.lx, y: anim.ly, z: anim.lz });
+    faces = buildFaces(anim, { x: anim.lx, y: anim.ly, z: anim.lz }, shape());
     return faces;
   }
 
@@ -109,12 +115,14 @@ export function createScene(renderer) {
   function draw(cam, fast, t = 0) {
     const list = [];
     // al editar dentro de la caja, las paredes que tapan la vista se vuelven translúcidas
-    const xrayOn = !!(state.xray || state.placingObj || state.drawing || state.lineTool === 'tira');
+    // mientras se coloca, se dibuja o se edita algo dentro, las paredes dejan ver
+    const xrayOn = !!(state.xray || state.placingObj || state.drawing || state.object || state.lineTool === 'tira');
     for (const f of faces) {
       const cx = f.o.x + (f.u.x + f.v.x) / 2, cy = f.o.y + (f.u.y + f.v.y) / 2, cz = f.o.z + (f.u.z + f.v.z) / 2;
-      f.xray = xrayOn && f.part === 'box' && f.side === 'out'
-        && (f.n.x * (cam.eye.x - cx) + f.n.y * (cam.eye.y - cy) + f.n.z * (cam.eye.z - cz)) > 0
-        && f.n.y < .5;
+      // las dos caras de una pared se aclaran juntas: la interior mira al revés
+      const d = f.side[0] === 'i' ? -1 : 1;
+      f.xray = xrayOn && f.part === 'box' && Math.abs(f.n.y) < .5
+        && d * (f.n.x * (cam.eye.x - cx) + f.n.y * (cam.eye.y - cy) + f.n.z * (cam.eye.z - cz)) > 0;
     }
     for (const f of faces) {
       const has = !f.plain && stickersOf(f.id).length > 0;
@@ -160,6 +168,18 @@ export function createScene(renderer) {
     renderer.meshes(meshList(t));
   }
 
+  /** Trazo en curso: la tira se ve nacer mientras el dedo se mueve. */
+  function sketchMesh() {
+    const d = state.drawing;
+    if (!d || d.path.length < 2) { sketch = null; return null; }
+    const k = d.path.length + '|' + d.thick;
+    if (!sketch || sketch.key !== k) {
+      if (sketch) renderer.dispose(sketch.mesh);
+      sketch = { key: k, mesh: buildStrip(d) };
+    }
+    return sketch.mesh;
+  }
+
   /** Objetos 3D listos para dibujar (con su color, brillo y transformación). */
   function meshList(t) {
     const out = [];
@@ -168,9 +188,9 @@ export function createScene(renderer) {
       const m = objectMesh(o, renderer);
       const { model, nor } = transform(o);
       let emissive = [0, 0, 0];
-      if (o.type === 'tira') emissive = modeColor(stripMode(o, state.objects, state.links), t, .2);
-      else if (o.type === 'interruptor') emissive = modeColor(o.mode || 'off', t, .5);
-      else if (CATALOG[o.type]?.light) emissive = modeColor('warm', t, o.x);
+      if (o.type === 'tira') emissive = lightColor(o.id, lightOf(o, state.objects, state.links), t, .2);
+      else if (isSource(o)) emissive = lightColor(o.id, lightConf(o), t, .5);
+      else if (CATALOG[o.type]?.light) emissive = lightColor(o.id, 'warm', t, o.x);
       out.push({
         mesh: m, model, nor,
         color: hex2rgb(o.color || '#ffffff'),
@@ -179,6 +199,14 @@ export function createScene(renderer) {
         xray: !!o.ghost,
         hi: state.object === o.id ? .45 : 0,
         gloss: o.type === 'tira' ? .3 : .14,
+      });
+    }
+    const sk = sketchMesh();
+    if (sk) {
+      out.push({
+        mesh: sk, ...IDENTITY,
+        color: hex2rgb(state.drawing.color || '#fff3d6'),
+        emissive: [1, .78, .48], alpha: .85, xray: true, hi: .3, gloss: .3,
       });
     }
     return out;

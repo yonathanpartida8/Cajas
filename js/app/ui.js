@@ -1,8 +1,8 @@
 // Interfaz: dock, hojas, medidas con − / + y arrastre, y colocación de imágenes.
-import { LIMITS } from '../box/model.js';
+import { LIMITS, DESIGNS } from '../box/model.js';
 import { MATERIALS, FINISHES } from '../box/materials.js';
-import { CATEGORIES, CATALOG_LIST, CATALOG, PALETTE } from '../objects/catalog.js';
-import { MODES, MODE_NAME } from './objects.js';
+import { CATEGORIES, CATALOG_LIST, CATALOG, PALETTE, LIGHT_PALETTE, propsOf } from '../objects/catalog.js';
+import { MODES, MODE_NAME, ROT_MODES, isStrip, isSource, isPower, meanScale } from './objects.js';
 import { state, canUndo, canRedo } from './store.js';
 import { audio } from '../features/audio.js';
 import { bump } from '../features/fx.js';
@@ -20,6 +20,8 @@ const DIMS = [
   ['tapa', 'Tapa', 'cuánto baja la tapa'],
   ['grosor', 'Grosor', 'espesor del cartón'],
 ];
+const DEG = 180 / Math.PI;
+const nameOf = o => (o ? (CATALOG[o.type]?.name || 'Objeto') : '');
 
 export function createUI(app) {
   const el = {
@@ -48,6 +50,7 @@ export function createUI(app) {
     if (!name || (sheet && sheet.id === 'sheet-' + name)) { sheet = null; el.scrim.classList.remove('on'); return; }
     sheet = $('#sheet-' + name);
     sheet.hidden = false;
+    sheet.scrollTop = 0;
     audio.play('panel');
     requestAnimationFrame(() => sheet.classList.add('on'));
     el.scrim.classList.add('on');
@@ -87,19 +90,20 @@ export function createUI(app) {
       </div>`;
     const [minus, plus] = row.querySelectorAll('.st-btn');
     const val = row.querySelector('.st-val'), num = val.querySelector('b');
-    const bump2 = d => { o.set(+(o.get() + d * o.step).toFixed(2)); refresh(); audio.play('tick'); };
+    const put = v => o.set(Math.max(o.min, Math.min(o.max, +v.toFixed(2))));
+    const bump2 = d => { put(o.get() + d * o.step); refresh(); audio.play('tick'); };
     hold(minus, () => bump2(-1));
     hold(plus, () => bump2(1));
     scrub(val, dx => {
       const q = Math.round(dx / 9);
       if (!q) return false;
-      o.set(+(o.get() + q * o.step).toFixed(2)); refresh();
+      put(o.get() + q * o.step); refresh();
       audio.play('tick');
       return true;
     });
     function refresh() {
       const v = o.get();
-      const txt = o.step < 1 ? v.toFixed(1) : String(Math.round(v));
+      const txt = o.step < 1 ? v.toFixed(o.step < .1 ? 2 : 1) : String(Math.round(v));
       if (num.textContent !== txt) { num.textContent = txt; bump(num); }
       minus.disabled = v <= o.min + 1e-6;
       plus.disabled = v >= o.max - 1e-6;
@@ -107,29 +111,6 @@ export function createUI(app) {
     parent.appendChild(row);
     refresh();
     return refresh;
-  }
-
-  // ---------------------------------------------------------------- medidas
-  const rows = {};
-  const box = $('#dims');
-  for (const [key, label, hint] of DIMS) {
-    const [min, max, , stepSize] = LIMITS[key];
-    rows[key] = stepRow(box, {
-      label, hint, min, max, step: stepSize,
-      get: () => state.dims[key],
-      set: v => app.setDim(key, v),
-    });
-  }
-  document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
-    app.setDims(PRESETS[b.dataset.preset]); app.commit(); syncDims();
-  });
-
-  function syncDims() {
-    for (const [key] of DIMS) rows[key]();
-    document.querySelectorAll('[data-preset]').forEach(b => {
-      const p = PRESETS[b.dataset.preset];
-      b.classList.toggle('on', Object.keys(p).every(k => Math.abs(p[k] - state.dims[k]) < .01));
-    });
   }
 
   /** Pulsación con repetición (mantener pulsado). */
@@ -164,6 +145,54 @@ export function createUI(app) {
     node.addEventListener('pointercancel', end);
   }
 
+  // ---------------------------------------------------------------- medidas
+  const rows = {};
+  const dimsBox = $('#dims');
+  for (const [key, label, hint] of DIMS) {
+    const [min, max, , stepSize] = LIMITS[key];
+    rows[key] = stepRow(dimsBox, {
+      label, hint, min, max, step: stepSize,
+      get: () => state.dims[key],
+      set: v => app.setDim(key, v),
+    });
+  }
+  document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
+    app.setDims(PRESETS[b.dataset.preset]); app.commit(); syncDims();
+  });
+
+  function syncDims() {
+    for (const [key] of DIMS) rows[key]();
+    document.querySelectorAll('[data-preset]').forEach(b => {
+      const p = PRESETS[b.dataset.preset];
+      b.classList.toggle('on', Object.keys(p).every(k => Math.abs(p[k] - state.dims[k]) < .01));
+    });
+  }
+
+  // ------------------------------------------------- diseño de la caja
+  const designGrid = $('#designGrid');
+  DESIGNS.forEach((d, i) => {
+    const b = document.createElement('button');
+    b.className = 'lib-item'; b.dataset.design = d.id;
+    b.style.animation = `btnIn .4s var(--spring) both ${i * .03}s`;
+    b.innerHTML = `<em>${d.emoji}</em><span>${d.name}</span>`;
+    b.onclick = () => { app.setDesign(d.id); syncDesign(); };
+    designGrid.appendChild(b);
+  });
+  const divRow = $('#divRow');
+  const refreshDiv = stepRow(divRow, {
+    label: 'Compartimentos', hint: 'divisiones interiores', min: 2, max: 4, step: 1, unit: '',
+    get: () => state.divisions, set: v => app.setDivisions(v),
+  });
+  function syncDesign() {
+    designGrid.querySelectorAll('.lib-item').forEach(b => b.classList.toggle('on', b.dataset.design === state.design));
+    divRow.hidden = state.design !== 'compartimentos';
+    refreshDiv();
+    document.querySelectorAll('[data-lid]').forEach(b => {
+      b.disabled = state.design === 'abierta'
+        || (app.lidHinged() && (b.dataset.lid === 'aside' || b.dataset.lid === 'place'));
+    });
+  }
+
   // ---------------------------------------------------------------- materiales y tapa
   const mat = $('#materials');
   MATERIALS.forEach(m => {
@@ -176,11 +205,6 @@ export function createUI(app) {
   document.querySelectorAll('[data-lid]').forEach(b => b.onclick = () => app.lid(b.dataset.lid));
 
   // ------------------------------------------------- biblioteca de objetos
-  const TOOLS = [
-    { id: '__tira', name: 'Tira de luces', emoji: '💡', cat: 'luces', tool: 'tira' },
-    { id: '__foto', name: 'Foto', emoji: '🖼️', cat: 'fotos', tool: 'foto' },
-    { id: '__forro', name: 'Forrar cartón', emoji: '🎨', cat: 'materiales', tool: 'forro' },
-  ];
   let libCat = 'amor';
   const libGrid = $('#libGrid'), libCats = $('#libCats');
   CATEGORIES.forEach(c => {
@@ -194,8 +218,7 @@ export function createUI(app) {
   function fillLib() {
     libCats.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.cat === libCat));
     libGrid.innerHTML = '';
-    const items = [...CATALOG_LIST.filter(i => i.cat === libCat), ...TOOLS.filter(t => t.cat === libCat)];
-    items.forEach((it, i) => {
+    CATALOG_LIST.filter(i => i.cat === libCat).forEach((it, i) => {
       const b = document.createElement('button');
       b.className = 'lib-item';
       b.style.animation = `btnIn .4s var(--spring) both ${i * .03}s`;
@@ -205,14 +228,26 @@ export function createUI(app) {
     });
   }
   fillLib();
+  const repeat = $('#optRepeat');
+  repeat.checked = state.repeat;
+  repeat.onchange = () => { state.repeat = repeat.checked; audio.play('toggle'); };
 
-  // ------------------------------------------------- ajustes del objeto
+  // ------------------------------------------------- panel del objeto
   const objColors = $('#objColors'), objParams = $('#objParams');
+  const objPos = $('#objPos'), objRot = $('#objRot'), objScl = $('#objScl');
+  const lightColors = $('#lightColors'), lightParams = $('#lightParams');
+
   PALETTE.forEach(hex => {
     const b = document.createElement('button');
     b.className = 'sw'; b.style.background = hex; b.dataset.col = hex; b.dataset.mute = '1';
     b.onclick = () => { app.objColor(hex); syncObj(); };
     objColors.appendChild(b);
+  });
+  LIGHT_PALETTE.forEach(hex => {
+    const b = document.createElement('button');
+    b.className = 'sw'; b.style.background = hex; b.dataset.hue = hex; b.dataset.mute = '1';
+    b.onclick = () => { app.setLight('hue', hex); app.commit(); syncObj(); };
+    lightColors.appendChild(b);
   });
   const modeChips = $('#modeChips');
   MODES.forEach(m => {
@@ -221,60 +256,132 @@ export function createUI(app) {
     b.onclick = () => { app.setSwitchMode(m); syncObj(); };
     modeChips.appendChild(b);
   });
+  const rotModes = $('#rotModes');
+  ROT_MODES.forEach(m => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.dataset.rmode = m.id; b.textContent = m.name;
+    b.onclick = () => { app.setRotMode(m.id); syncObj(); };
+    rotModes.appendChild(b);
+  });
+
+  // pestañas del panel
+  const tabs = $('#objTabs');
+  tabs.querySelectorAll('.chip').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  function showTab(name) {
+    tabs.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+    document.querySelectorAll('#sheet-obj [data-panel]').forEach(p => { p.hidden = p.dataset.panel !== name; });
+  }
+
   $('#btnLink').onclick = () => app.startLink();
+  $('#btnUnlink').onclick = () => app.unlinkAll();
   $('#objCenter').onclick = () => { app.centerObject(); syncObj(); };
   $('#objFloor').onclick = () => { app.floorObject(); syncObj(); };
+  $('#objCopy2').onclick = () => app.duplicateObject();
+  $('#objLock2').onclick = () => app.lockObject();
+  document.querySelectorAll('[data-reset]').forEach(b => b.onclick = () => { app.resetObject(b.dataset.reset); syncObj(); });
 
   let paramRefresh = [];
-  function buildParams(o) {
-    objParams.innerHTML = '';
+  /** Todos los controles del objeto se generan a partir de su descripción. */
+  function buildObjSheet(o) {
+    for (const c of [objParams, objPos, objRot, objScl, lightParams]) c.innerHTML = '';
     paramRefresh = [];
     if (!o) return;
-    const def = CATALOG[o.type] || {};
-    const add = c => paramRefresh.push(stepRow(objParams, c));
-    if (o.type !== 'tira') {
-      add({ label: 'Tamaño', hint: 'escala del objeto', min: .3, max: 3, step: .1, unit: '×',
-        get: () => o.scale ?? 1, set: v => app.objSet('scale', v) });
-      add({ label: 'Giro', hint: 'grados', min: -180, max: 180, step: 15, unit: '°',
-        get: () => Math.round((o.rot || 0) * 180 / Math.PI), set: v => app.objSet('rot', v * Math.PI / 180) });
-      add({ label: 'Altura', hint: 'desde el fondo', min: 0, max: 60, step: .5,
-        get: () => o.y, set: v => app.objSet('y', v) });
+    const add = (parent, c) => paramRefresh.push(stepRow(parent, c));
+
+    // --- posición ---
+    add(objPos, { label: 'Izq. · der.', hint: 'eje X', min: -40, max: 40, step: .5,
+      get: () => o.x, set: v => app.objSet('x', v) });
+    add(objPos, { label: 'Altura', hint: 'eje Y · desde el fondo', min: 0, max: 70, step: .5,
+      get: () => o.y, set: v => app.objSet('y', v) });
+    add(objPos, { label: 'Fondo · frente', hint: 'eje Z', min: -40, max: 40, step: .5,
+      get: () => o.z, set: v => app.objSet('z', v) });
+
+    // --- giro (los tres ejes, en grados) ---
+    for (const [k, label, hint] of [['x', 'Inclinar', 'eje X'], ['y', 'Girar', 'eje Y'], ['z', 'Ladear', 'eje Z']]) {
+      add(objRot, { label, hint, min: -180, max: 180, step: 5, unit: '°',
+        get: () => Math.round(o.rot[k] * DEG),
+        set: v => app.objSet('rot.' + k, v / DEG) });
     }
-    if (def.params) {
-      add({ label: 'Ancho', hint: 'del papel', min: .4, max: 6, step: .2, get: () => o.pw ?? 1.6, set: v => app.objSet('pw', v) });
-      add({ label: 'Largo', hint: 'de la tira', min: 2, max: 18, step: .5, get: () => o.ph ?? 6, set: v => app.objSet('ph', v) });
-      add({ label: 'Grosor', hint: 'del papel', min: .04, max: 1, step: .04, get: () => o.pt ?? .12, set: v => app.objSet('pt', v) });
+
+    // --- tamaño (uniforme y por eje) ---
+    add(objScl, { label: 'Tamaño', hint: 'los tres ejes a la vez', min: .2, max: 4, step: .1, unit: '×',
+      get: () => meanScale(o), set: v => app.objScale(v) });
+    for (const [k, label, hint] of [['x', 'Anchura', 'eje X'], ['y', 'Altura', 'eje Y'], ['z', 'Profundidad', 'eje Z']]) {
+      add(objScl, { label, hint, min: .2, max: 4, step: .1, unit: '×',
+        get: () => o.scl[k], set: v => app.objSet('scl.' + k, v) });
     }
-    if (o.type === 'tira') {
-      add({ label: 'Grosor', hint: 'del cable y las luces', min: .2, max: 1.6, step: .1,
-        get: () => o.thick ?? .5, set: v => app.objSet('thick', v) });
+
+    // --- controles propios del tipo ---
+    for (const p of propsOf(o.type)) {
+      add(objParams, { ...p, get: () => o[p.k] ?? p.def, set: v => app.objSet(p.k, v) });
     }
+
+    // --- luz a medida ---
+    if (isSource(o)) {
+      add(lightParams, { label: 'Intensidad', hint: 'fuerza de la luz', min: .2, max: 2, step: .1, unit: '×',
+        get: () => o.power ?? 1, set: v => app.setLight('power', v) });
+      add(lightParams, { label: 'Parpadeo', hint: '0 = luz fija', min: 0, max: 4, step: .2, unit: 'Hz',
+        get: () => o.blink ?? 1.4, set: v => app.setLight('blink', v) });
+    }
+  }
+
+  /** Texto que explica de dónde viene (o no) la corriente. */
+  function describe(o) {
+    const w = app.wiringOf(o);
+    const names = w.sources.map(nameOf).join(', ');
+    if (isStrip(o)) {
+      if (!w.sources.length) return 'Sin conexión. Conecta un interruptor o una caja de pilas para encenderla.';
+      return w.powered
+        ? `Encendida desde: ${names}.`
+        : `Conectada a ${names}, pero sin corriente: enciende la caja de pilas.`;
+    }
+    const out = (state.links[o.id] || []).map(id => nameOf(app.getObject(id))).filter(Boolean);
+    const feed = out.length ? `Alimenta ${out.length}: ${out.join(', ')}.` : 'Todavía no alimenta nada.';
+    if (isPower(o)) return feed;
+    return `${feed} ${w.sources.length ? `Recibe corriente de ${names}.` : 'Le faltan pilas: conéctale una caja.'}`;
   }
 
   function syncObj() {
     const o = app.selectedObject();
     const on = !!o;
     el.dockObject.hidden = !on;
-    el.zbar.hidden = !on || o.type === 'tira';
-    $('#objSwitch').hidden = !on || !CATALOG[o?.type]?.switch;
-    $('#obLock').classList.toggle('on', !!o?.locked);
+    el.zbar.hidden = !on || isStrip(o);
     if (!on) return;
-    $('#objTitle').textContent = (CATALOG[o.type]?.name) || 'Tira de luces';
+    $('#objTitle').textContent = nameOf(o);
+    $('#obLock').classList.toggle('on', !!o.locked);
+    $('#objLock2').classList.toggle('on', !!o.locked);
     objColors.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.col === o.color));
+    lightColors.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.hue === (o.hue || '#ffb463')));
+    rotModes.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.rmode === state.rotMode));
+    $('#rotHint').textContent = ROT_MODES.find(m => m.id === state.rotMode)?.hint || '';
+
+    const electric = isSource(o) || isStrip(o);
+    const strip = isStrip(o);
+    $('#tabLuz').hidden = !electric;
+    for (const t of ['mover', 'girar', 'tam']) {              // las tiras siguen su trazado
+      tabs.querySelector(`[data-tab="${t}"]`).hidden = strip;
+    }
+    $('#modeTitle').hidden = !isSource(o);
+    modeChips.hidden = !isSource(o);
+    $('#customLight').hidden = !isSource(o) || (o.mode || 'off') !== 'custom';
+    $('#btnLink').hidden = !isSource(o);
     modeChips.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.mode === (o.mode || 'off')));
-    const links = (state.links[o.id] || []).length;
-    $('#linkInfo').textContent = links ? `Controla ${links} tira${links > 1 ? 's' : ''} de luces.` : 'Sin tiras conectadas todavía.';
+    if (electric) $('#linkInfo').textContent = describe(o);
+    const cur = tabs.querySelector('.chip.on')?.dataset.tab;
+    if ((!electric && cur === 'luz') || (strip && ['mover', 'girar', 'tam'].includes(cur))) showTab('basico');
+
     paramRefresh.forEach(f => f());
     syncZ();
   }
 
-  /** El objeto de la hoja se reconstruye al cambiar de selección. */
+  /** El panel del objeto se reconstruye al cambiar de selección. */
   let lastObjId = null;
   function ensureObjSheet() {
     const o = app.selectedObject();
     if ((o?.id || null) === lastObjId) return;
     lastObjId = o?.id || null;
-    buildParams(o);
+    buildObjSheet(o);
+    showTab('basico');
   }
 
   // ------------------------------------------------- altura (eje Y)
@@ -282,7 +389,7 @@ export function createUI(app) {
   const zMax = () => Math.max(8, state.dims.alto * 1.4);
   function syncZ() {
     const o = app.selectedObject();
-    if (!o || o.type === 'tira') return;
+    if (!o || isStrip(o)) return;
     const f = Math.max(0, Math.min(1, o.y / zMax()));
     zFill.style.height = (f * 100) + '%';
     zVal.textContent = o.y.toFixed(1);
@@ -321,7 +428,9 @@ export function createUI(app) {
     b.onclick = () => { app.setLining({ finish: f.id }); syncForro(); };
     forroFinish.appendChild(b);
   });
-  $('#forroAll').onclick = () => { app.liningAll(); syncForro(); };
+  document.querySelectorAll('[data-scope]').forEach(b => {
+    b.onclick = () => { app.liningScope(b.dataset.scope); syncForro(); };
+  });
   $('#forroClear').onclick = () => { app.clearLining(); syncForro(); };
 
   function syncForro() {
@@ -347,7 +456,11 @@ export function createUI(app) {
   }
 
   // ------------------------------------------------- dock del objeto
-  $('#obRot').onclick = () => app.objSet('rot', (app.selectedObject()?.rot || 0) + Math.PI / 8);
+  $('#obRot').onclick = () => {
+    const o = app.selectedObject();
+    if (o) app.objSet('rot.y', o.rot.y + Math.PI / 8);
+    app.commit();
+  };
   $('#obCopy').onclick = () => app.duplicateObject();
   $('#obLock').onclick = () => app.lockObject();
   $('#obDel').onclick = () => app.removeObject();
@@ -373,7 +486,7 @@ export function createUI(app) {
   $('#stCopy').onclick = () => app.duplicate();
   $('#stDel').onclick = () => app.remove();
   $('#stDone').onclick = () => app.select(null);
-  $('#btnReset').onclick = () => { app.reset(); open(null); syncDims(); syncMat(); };
+  $('#btnReset').onclick = () => { app.reset(); open(null); syncDims(); syncMat(); syncDesign(); };
   el.surfaceClose = $('#surfaceClose');
   el.surfaceClose.onclick = () => { app.select(null); app.pickFace(null); };
   el.surfaceMove.onclick = () => app.toggleLidMove();
@@ -433,11 +546,12 @@ export function createUI(app) {
     ensureObjSheet();
     syncObj();
     syncForro();
+    syncDesign();
     const busy = !el.drawbar.hidden;
     document.body.classList.toggle('editing', sel || obj);
     el.dockMain.hidden = sel || obj || busy;
     el.dockObject.hidden = !obj || busy;
-    el.zbar.hidden = el.dockObject.hidden || app.selectedObject()?.type === 'tira';
+    el.zbar.hidden = el.dockObject.hidden || isStrip(app.selectedObject());
     el.dockSt.hidden = !sel;
     el.lock.hidden = !sel;
     el.lock.classList.toggle('on', state.lockAspect);
@@ -450,7 +564,7 @@ export function createUI(app) {
         el.surfaceName.textContent = label.name;
         bump(el.surface, 'pulse');
       }
-      el.surfaceMove.hidden = !label.lid;
+      el.surfaceMove.hidden = !label.lid || app.lidHinged();
       el.surfaceMove.classList.toggle('on', state.lidPicked);
       el.surfaceClose.hidden = false;
     }
@@ -461,7 +575,7 @@ export function createUI(app) {
     el.toast.textContent = msg;
     el.toast.classList.add('on');
     clearTimeout(toastT);
-    toastT = setTimeout(() => el.toast.classList.remove('on'), 2100);
+    toastT = setTimeout(() => el.toast.classList.remove('on'), 2400);
   }
 
   const loading = (on, text = 'Procesando…') => { el.loaderText.textContent = text; el.loader.hidden = !on; };
@@ -472,6 +586,6 @@ export function createUI(app) {
     if (on) open(null);
   }
 
-  syncDims(); syncMat(); sync();
+  syncDims(); syncMat(); syncDesign(); sync();
   return { sync, syncDims, syncMat, toast, loading, preview, open, placing, bar };
 }

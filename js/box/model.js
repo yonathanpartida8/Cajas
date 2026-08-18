@@ -1,4 +1,5 @@
 // Geometría de la caja: dimensiones (cm) → caras con ejes u/v en unidades de mundo.
+// Un mismo juego de piezas (anillos, bordes, losas) compone todos los diseños.
 import { v3, norm, cross } from '../core/math3d.js';
 
 export const S = 0.045;      // cm → unidades de mundo
@@ -13,6 +14,24 @@ export const LIMITS = {
   grosor: [.2, 1.5, .4, .1],
 };
 
+/** Diseños de caja disponibles. `hinge` = la tapa va sujeta y gira. */
+export const DESIGNS = [
+  { id: 'clasica', name: 'Clásica', emoji: '📦', hint: 'caja con tapa suelta' },
+  { id: 'abierta', name: 'Sin tapa', emoji: '🗃️', hint: 'abierta por arriba' },
+  { id: 'bisagra', name: 'Con bisagra', emoji: '🧰', hint: 'la tapa gira por detrás', hinge: 1 },
+  { id: 'regalo', name: 'De regalo', emoji: '🎁', hint: 'la tapa cubre la caja entera' },
+  { id: 'compartimentos', name: 'Compartimentos', emoji: '🧊', hint: 'divisiones interiores' },
+  { id: 'doble', name: 'Doble apertura', emoji: '🚪', hint: 'dos tapas que se abren al centro', hinge: 2 },
+];
+
+export const designOf = id => DESIGNS.find(x => x.id === id) || DESIGNS[0];
+export const hasLid = id => designOf(id).id !== 'abierta';
+export const isHinged = id => !!designOf(id).hinge;
+/** Altura de la tapa a la que abre una bisagra (rad) a partir del alzado en cm. */
+export const lidAngle = y => Math.max(0, Math.min(2.1, y * .13));
+/** Cuánto baja la falda de la tapa según el diseño. */
+export const lidDrop = (d, design) => design === 'regalo' ? Math.max(d.tapa, d.alto * .94) : d.tapa;
+
 /** Crea una cara. Entradas en cm; salida en unidades de mundo. */
 function face(id, part, side, o, u, v, opts = {}) {
   const U = v3(u[0] * S, u[1] * S, u[2] * S);
@@ -23,7 +42,7 @@ function face(id, part, side, o, u, v, opts = {}) {
     n: norm(cross(V, U)),
     uLen: Math.hypot(u[0], u[1], u[2]),
     vLen: Math.hypot(v[0], v[1], v[2]),
-    shade: opts.shade ?? (side === 'in' ? .84 : 1),
+    shade: opts.shade ?? (side[0] === 'i' ? .84 : 1),
     plain: !!opts.plain,
   };
 }
@@ -57,12 +76,56 @@ function rim(prefix, part, y, ax, az, ix, iz, dir, out) {
   for (const [id, o, u, v] of q) out.push(face(id, part, 'out', o, u, v, { plain: true, shade: .92 }));
 }
 
+/** Tapa clásica: falda alrededor + techo + interior. */
+function lidBox(tag, A, B, T, y0, y1, yb, out) {
+  const Ai = A - T, Bi = B - T;
+  ring(`l.o${tag}`, 'lid', 'out', A, B, y1, yb, false, out);
+  ring(`l.i${tag}`, 'lid', 'in', Ai, Bi, y0, yb, true, out);
+  out.push(face(`l.o${tag}.top`, 'lid', 'out', [-A, y1, -B], [2 * A, 0, 0], [0, 0, 2 * B]));
+  out.push(face(`l.i${tag}.top`, 'lid', 'in', [-Ai, y0, Bi], [2 * Ai, 0, 0], [0, 0, -2 * Bi], { shade: .8 }));
+  rim(`l${tag}`, 'lid', yb, A, B, Ai, Bi, -1, out);
+}
+
+/** Losa plana (las hojas de la doble apertura). */
+function lidSlab(tag, A, B, y0, y1, out) {
+  ring(`l.o${tag}`, 'lid', 'out', A, B, y1, y0, false, out);
+  out.push(face(`l.o${tag}.top`, 'lid', 'out', [-A, y1, -B], [2 * A, 0, 0], [0, 0, 2 * B]));
+  out.push(face(`l.i${tag}.bottom`, 'lid', 'in', [-A, y0, B], [2 * A, 0, 0], [0, 0, -2 * B], { shade: .8 }));
+}
+
+/** Tabique interior que separa compartimentos. */
+function divider(n, cz, ix, T, yTop, yBot, out) {
+  const h = yTop - yBot;
+  out.push(face(`b.i.div${n}`, 'box', 'in', [-ix, yTop, cz + T / 2], [2 * ix, 0, 0], [0, -h, 0], { shade: .88 }));
+  out.push(face(`b.i.div${n + 1}`, 'box', 'in', [ix, yTop, cz - T / 2], [-2 * ix, 0, 0], [0, -h, 0], { shade: .88 }));
+  out.push(face(`b.o.div${n + 2}`, 'box', 'out', [-ix, yTop, cz - T / 2], [2 * ix, 0, 0], [0, 0, T], { plain: true, shade: .92 }));
+}
+
+const shift = (list, dx, dy, dz) => {
+  for (const f of list) f.o = v3(f.o.x + dx, f.o.y + dy, f.o.z + dz);
+};
+
+/** Gira un grupo de caras alrededor del eje X que pasa por (pivot.y, pivot.z). */
+function hinge(list, ang, pivot, dir) {
+  if (!ang) return;
+  const c = Math.cos(ang), s = Math.sin(ang) * dir;
+  const rv = v => v3(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
+  for (const f of list) {
+    const dy = f.o.y - pivot.y, dz = f.o.z - pivot.z;
+    f.o = v3(f.o.x, pivot.y + dy * c - dz * s, pivot.z + dy * s + dz * c);
+    f.u = rv(f.u); f.v = rv(f.v);
+    f.n = norm(cross(f.v, f.u));
+  }
+}
+
 /**
- * Construye todas las caras a partir de las medidas y el desplazamiento de la tapa.
- * @param {{largo:number,ancho:number,alto:number,tapa:number}} d  cm
+ * Construye todas las caras a partir de las medidas, la tapa y el diseño.
+ * @param {{largo:number,ancho:number,alto:number,tapa:number,grosor:number}} d  cm
  * @param {{x:number,y:number,z:number}} lid  desplazamiento de la tapa (cm)
+ * @param {{design?:string, divisions?:number}} opts
  */
-export function buildFaces(d, lid = { x: 0, y: 0, z: 0 }) {
+export function buildFaces(d, lid = { x: 0, y: 0, z: 0 }, opts = {}) {
+  const design = designOf(opts.design).id;
   const W = d.ancho, D = d.largo, H = d.alto, T = d.grosor;
   const ax = W / 2, az = D / 2, ix = ax - T, iz = az - T;
   const f = [];
@@ -74,40 +137,68 @@ export function buildFaces(d, lid = { x: 0, y: 0, z: 0 }) {
   f.push(face('b.i.bottom', 'box', 'in', [-ix, T, -iz], [2 * ix, 0, 0], [0, 0, 2 * iz], { shade: .9 }));
   rim('b', 'box', H, ax, az, ix, iz, 1, f);
 
+  if (design === 'compartimentos') {
+    const n = Math.max(2, Math.min(4, Math.round(opts.divisions ?? 2)));
+    for (let i = 1; i < n; i++) divider(i * 3, -iz + 2 * iz * i / n, ix, T, H, T, f);
+  }
+
+  if (design === 'abierta') return f;
+
   // --- tapa ---
-  const A = ax + GAP + T, B = az + GAP + T, Ai = A - T, Bi = B - T;
-  const y0 = H, y1 = H + T, yb = H - Math.min(d.tapa, H - T);
+  const A = ax + GAP + T, B = az + GAP + T;
+  const y0 = H, y1 = H + T;
+  const drop = lidDrop(d, design);
+  const yb = H - Math.min(drop, H - T);
+  const ang = lidAngle(lid.y);
+
+  if (design === 'doble') {
+    for (const s of [1, -1]) {                       // hoja delantera y trasera
+      const L = [];
+      lidSlab(s > 0 ? '' : '2', A, B / 2, y0, y1, L);
+      shift(L, 0, 0, s * (B / 2) * S);
+      hinge(L, ang, { y: y1 * S, z: s * B * S }, s);
+      f.push(...L);
+    }
+    return f;
+  }
+
   const L = [];
-  ring('l.o', 'lid', 'out', A, B, y1, yb, false, L);
-  ring('l.i', 'lid', 'in', Ai, Bi, y0, yb, true, L);
-  L.push(face('l.o.top', 'lid', 'out', [-A, y1, -B], [2 * A, 0, 0], [0, 0, 2 * B]));
-  L.push(face('l.i.top', 'lid', 'in', [-Ai, y0, Bi], [2 * Ai, 0, 0], [0, 0, -2 * Bi], { shade: .8 }));
-  rim('l', 'lid', yb, A, B, Ai, Bi, -1, L);
-
-  const off = v3(lid.x * S, lid.y * S, lid.z * S);
-  for (const c of L) { c.o = v3(c.o.x + off.x, c.o.y + off.y, c.o.z + off.z); f.push(c); }
-
+  lidBox('', A, B, T, y0, y1, yb, L);
+  if (isHinged(design)) hinge(L, ang, { y: y1 * S, z: -B * S }, -1);
+  else shift(L, lid.x * S, lid.y * S, lid.z * S);
+  f.push(...L);
   return f;
 }
 
-const NAMES = { front: 'el frente', back: 'la parte trasera', right: 'el lado derecho', left: 'el lado izquierdo', bottom: 'la base', top: 'la tapa' };
+const NAMES = {
+  front: 'el frente', back: 'la parte trasera', right: 'el lado derecho',
+  left: 'el lado izquierdo', bottom: 'la base', top: 'la tapa', div: 'una división',
+};
+
+/** Nombre sin numerar de la cara (las piezas repetidas llevan sufijo). */
+const baseName = name => (name || '').replace(/\d+$/, '');
 
 /** Nombre legible de una cara, para los avisos de la interfaz. */
-export function faceLabel(face) {
-  const [part, side, name] = face.id.split('.');
-  if (part === 'l') return side === 'i' ? 'el interior de la tapa' : name === 'top' ? 'la tapa' : 'el lateral de la tapa';
-  if (side === 'i') return name === 'bottom' ? 'el fondo interior' : 'el interior';
+export function faceLabel(f) {
+  const [part, side, raw] = f.id.split('.');
+  const name = baseName(raw);
+  if (part === 'l') return side[0] === 'i' ? 'el interior de la tapa' : name === 'top' ? 'la tapa' : 'el lateral de la tapa';
+  if (side[0] === 'i') return name === 'bottom' ? 'el fondo interior' : name === 'div' ? 'una división' : 'el interior';
   return NAMES[name] || 'la caja';
 }
 
-const SHORT = { front: 'Frente', back: 'Trasera', right: 'Lado der.', left: 'Lado izq.', bottom: 'Base', top: 'Tapa' };
+const SHORT = {
+  front: 'Frente', back: 'Trasera', right: 'Lado der.', left: 'Lado izq.',
+  bottom: 'Base', top: 'Tapa', div: 'División',
+};
 
 /** Etiqueta corta para el indicador de superficie. */
-export function faceShort(face) {
-  const [part, side, name] = face.id.split('.');
-  const zone = part === 'l' ? (side === 'i' ? 'Interior tapa' : name === 'top' ? 'Tapa' : 'Tapa · ' + SHORT[name]) : null;
-  if (zone) return zone;
-  if (side === 'i') return name === 'bottom' ? 'Fondo interior' : 'Interior · ' + SHORT[name];
+export function faceShort(f) {
+  const [part, side, raw] = f.id.split('.');
+  const name = baseName(raw);
+  if (part === 'l') return side[0] === 'i' ? 'Interior tapa' : name === 'top' ? 'Tapa' : 'Tapa · ' + (SHORT[name] || '');
+  if (name === 'div') return 'División';
+  if (side[0] === 'i') return name === 'bottom' ? 'Fondo interior' : 'Interior · ' + (SHORT[name] || '');
   return SHORT[name] || 'Caja';
 }
 

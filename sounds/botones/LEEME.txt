@@ -1,0 +1,2 @@
+Sonidos de la categoría «botones».
+Suelta aquí archivos .wav o .mp3: la app los detecta y los elige al azar.

@@ -1,5 +1,12 @@
-// Sonido sintetizado con Web Audio: sin archivos, sin descargas y muy ligero.
-// Paleta sonora "de cartón": golpes suaves, roces de papel y tonos cálidos.
+// Sonido de la aplicación.
+//
+// Dos capas que conviven:
+//   1. Archivos reales dentro de /sounds/<categoría>/ (.wav o .mp3). Se detectan
+//      solos al arrancar y se elige uno **al azar sin repetir** en cada toque.
+//   2. Si una categoría está vacía, suena el efecto sintetizado de siempre
+//      (Web Audio, sin descargas). Así la app nunca se queda muda.
+//
+// Añadir sonidos = soltar archivos en su carpeta. Nada más.
 
 let ctx = null, master = null, noise = null;
 const cfg = { sound: true, haptics: true };
@@ -74,6 +81,7 @@ const VOICES = {
   undo:     () => tone({ f: 700, f2: 460, dur: .09, vol: .16 }),
   redo:     () => tone({ f: 460, f2: 700, dur: .09, vol: .16 }),
   toggle:   () => tone({ f: 880, f2: 660, type: 'triangle', dur: .06, vol: .14 }),
+  light:    () => { tone({ f: 1040, f2: 1560, dur: .09, vol: .13 }); hiss({ f: 3000, f2: 5200, q: 1.6, dur: .08, vol: .05 }); },
   panel:    () => { hiss({ f: 700, f2: 1600, q: .7, dur: .16, vol: .12 }); tone({ f: 380, f2: 520, dur: .1, vol: .08 }); },
   error:    () => tone({ f: 220, f2: 165, type: 'triangle', dur: .18, vol: .2 }),
   whoosh:   () => hiss({ f: 300, f2: 2200, q: .6, dur: .26, vol: .14 }),
@@ -82,22 +90,118 @@ const VOICES = {
 const BUZZ = {
   tap: 8, select: 10, grab: 8, tick: 4, hover: 6, place: [14, 24, 12], lidOpen: 16,
   lidClose: [10, 30, 18], cut: [8, 20, 8], success: [12, 40, 16], remove: [16, 26, 16],
-  undo: 8, redo: 8, toggle: 10, panel: 8, error: [18, 40, 18], whoosh: 10,
+  undo: 8, redo: 8, toggle: 10, light: 10, panel: 8, error: [18, 40, 18], whoosh: 10,
 };
 
+// ---------------------------------------------------------------- archivos
+/** Carpeta de /sounds/ que corresponde a cada efecto. */
+export const FOLDERS = {
+  tap: 'toque', select: 'toque', grab: 'toque', hover: 'toque',
+  tick: 'medidas',
+  place: 'objetos', remove: 'objetos',
+  lidOpen: 'abrir', lidClose: 'cerrar',
+  cut: 'borrador',
+  toggle: 'luces', light: 'luces',
+  success: 'exito', error: 'error',
+  panel: 'botones', undo: 'botones', redo: 'botones', whoosh: 'botones',
+};
+const DIRS = [...new Set(Object.values(FOLDERS))];
+const BASE = 'sounds/';
+const AUDIO_RE = /\.(wav|mp3|ogg|m4a)$/i;
+
+/** carpeta → {files, bag, last, buffers} */
+const bank = new Map();
+let scanned = false;
+
+/** Lee el índice (si existe) y, además, intenta leer el listado del directorio. */
+async function scan() {
+  if (scanned) return;
+  scanned = true;
+  let index = {};
+  try {
+    const r = await fetch(BASE + 'index.json', { cache: 'no-cache' });
+    if (r.ok) index = await r.json();
+  } catch { /* sin índice: se intenta el listado */ }
+
+  await Promise.all(DIRS.map(async dir => {
+    const files = new Set((index[dir] || []).filter(n => AUDIO_RE.test(n)));
+    try {                                        // servidores que listan carpetas
+      const r = await fetch(BASE + dir + '/', { cache: 'no-cache' });
+      const txt = r.ok ? await r.text() : '';
+      for (const m of txt.matchAll(/href="([^"?#]+)"/g)) {
+        const n = decodeURIComponent(m[1].split('/').pop());
+        if (AUDIO_RE.test(n)) files.add(n);
+      }
+    } catch { /* normal: la mayoría de servidores no listan */ }
+    if (files.size) bank.set(dir, { files: [...files], bag: [], last: null, buffers: new Map() });
+  }));
+}
+
+/** Bolsa barajada: no repite un sonido hasta agotar los demás. */
+function pick(dir) {
+  const b = bank.get(dir);
+  if (!b || !b.files.length) return null;
+  if (!b.bag.length) {
+    b.bag = [...b.files].sort(() => Math.random() - .5);
+    if (b.bag.length > 1 && b.bag[b.bag.length - 1] === b.last) b.bag.unshift(b.bag.pop());
+  }
+  b.last = b.bag.pop();
+  return b.last;
+}
+
+async function buffer(dir, file) {
+  const b = bank.get(dir);
+  if (b.buffers.has(file)) return b.buffers.get(file);
+  const p = fetch(BASE + dir + '/' + encodeURIComponent(file))
+    .then(r => r.arrayBuffer())
+    .then(a => ctx.decodeAudioData(a))
+    .catch(() => null);
+  b.buffers.set(file, p);
+  return p;
+}
+
+async function playFile(dir, gain) {
+  const file = pick(dir);
+  if (!file) return false;
+  const buf = await buffer(dir, file);
+  if (!buf) return false;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const g = ctx.createGain();
+  g.gain.value = gain;
+  src.connect(g).connect(master);
+  src.start();
+  return true;
+}
+
 /** Reproduce un efecto (y su vibración) si están activados. */
-export function play(name) {
-  const v = VOICES[name];
-  if (!v) return;
-  if (cfg.sound && ensure()) { try { v(); } catch { /* sin audio disponible */ } }
+export function play(name, { gain = 1 } = {}) {
   if (cfg.haptics && navigator.vibrate) navigator.vibrate(BUZZ[name] || 8);
+  if (!cfg.sound || !ensure()) return;
+  const dir = FOLDERS[name];
+  if (dir && bank.has(dir)) {
+    playFile(dir, gain).then(ok => { if (!ok) fallback(name); });
+    return;
+  }
+  fallback(name);
+}
+
+function fallback(name) {
+  const v = VOICES[name];
+  if (v) { try { v(); } catch { /* sin audio disponible */ } }
 }
 
 export const audio = {
   play,
-  set sound(v) { cfg.sound = v; if (v) ensure(); },
+  buzz: p => { if (cfg.haptics && navigator.vibrate) navigator.vibrate(p); },
+  /** Categorías con archivos propios encontrados (para Ajustes). */
+  get packs() { return [...bank.keys()]; },
+  set sound(v) { cfg.sound = v; if (v) { ensure(); scan(); } },
   get sound() { return cfg.sound; },
   set haptics(v) { cfg.haptics = v; },
   get haptics() { return cfg.haptics; },
-  unlock: () => { if (cfg.sound) ensure(); },
+  unlock: () => { if (cfg.sound) { ensure(); scan(); } },
 };
+
+// el escaneo no bloquea nada: si tarda, los primeros toques suenan sintetizados
+scan();
