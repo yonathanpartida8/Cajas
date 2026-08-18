@@ -11,9 +11,11 @@ import { extent, faceLabel, faceShort, lidHalf, isHinged, lidAngle, S, LIMITS } 
 import { clamp, damp, v3, rayPlane } from './core/math3d.js';
 import * as store from './app/store.js';
 import { CATALOG, defaultsFor } from './objects/catalog.js';
+
+let tuneT = 0;
 import {
-  clampObject, hasAnimation, applyRot, resetTransform, normalize,
-  MODES, MODE_NAME, isSource, isStrip, isSwitch, isPower, canLink, wiring,
+  clampObject, hasAnimation, applyRot, resetTransform, normalize, birth, blip,
+  MODES, MODE_NAME, POSES, isSource, isStrip, isSwitch, isPower, canLink, wiring, targetsOf,
 } from './app/objects.js';
 
 const { state, images } = store;
@@ -424,6 +426,7 @@ const app = {
     state.placingObj = null;
     state.object = g.id;
     ui.bar(null);
+    birth(g.id);                                     // aparece creciendo
     const c = camera().project(scene.centerOf(g));
     if (c) fx.ring(c.x, c.y, 'ok');
     audio.play('place');
@@ -506,6 +509,7 @@ const app = {
     clampObject(c, state.dims, scene.meshOf(c));
     state.objects.push(c);
     state.object = c.id;
+    birth(c.id);
     audio.play('place'); store.commit(); ui.sync(); redraw = true;
     ui.toast('Copia creada');
   },
@@ -528,10 +532,26 @@ const app = {
     ui.toast('Objeto eliminado');
   },
 
+  /** Reparte el papel picado por todo el interior: sutil, decorado o rellenito. */
+  fillBox(level) {
+    const o = selObj();
+    if (!o || o.type !== 'papel') return;
+    const d = state.dims, t = d.grosor;
+    const w = Math.max(2, d.ancho - 2 * t), l = Math.max(2, d.largo - 2 * t);
+    const dens = { poco: .05, medio: .14, mucho: .3 }[level] ?? .14;
+    o.count = Math.max(6, Math.min(120, Math.round(w * l * dens)));
+    o.spread = +Math.max(1, Math.min(w, l) / 2 - .8).toFixed(1);
+    o.layer = { poco: .5, medio: 2, mucho: 5 }[level] ?? 2;
+    o.x = 0; o.z = 0; o.y = t;
+    clampObject(o, state.dims, scene.meshOf(o));
+    audio.play('place'); store.commit(); ui.sync(); redraw = true;
+    ui.toast(`${o.count} papelitos repartidos`);
+  },
+
   // ---- tiras de luces ----
   startStrip() {
     app.select(null); app.selectObject(null);
-    state.drawing = { path: [], color: '#fff3d6', thick: .5 };
+    state.drawing = { path: [], color: '#3a2a20', ...defaultsFor('tira') };
     ui.bar({ title: 'Dibuja la tira de luces', hint: 'se forma bajo tu dedo', ok: 'Listo' },
       () => app.endStrip(true), () => app.endStrip(false));
     audio.play('whoosh'); ui.sync(); redraw = true;
@@ -552,12 +572,13 @@ const app = {
     ui.bar(null);
     if (keep && d && d.path.length > 2) {
       // nace apagada: sin fuente de energía no puede encender
-      const o = store.newObject({ type: 'tira', path: d.path, color: d.color, thick: d.thick });
+      const o = store.newObject({ type: 'tira', path: d.path, color: d.color, ...defaultsFor('tira') });
       state.objects.push(o);
       state.object = o.id;
+      birth(o.id);
       audio.play('success'); fx.flash();
       store.commit();
-      ui.toast('Conecta un interruptor o una caja de pilas para encenderla');
+      ui.toast('Conecta un botón o una caja de pilas para encenderla');
     } else if (keep) {
       audio.play('error');
       ui.toast('Traza un recorrido más largo');
@@ -565,12 +586,33 @@ const app = {
     ui.sync(); redraw = true;
   },
 
-  // ---- interruptores, pilas y conexiones ----
+  // ---- botones, pilas y conexiones ----
+  /** Pulsar un botón o una caja de pilas: sin nada conectado, no hace nada. */
   cycleSwitch(o) {
+    if (!targetsOf(o, state.links).length) {
+      blip(o.id);                                   // parpadeo de «no estoy conectado»
+      audio.play('error');
+      const p = camera().project(scene.centerOf(o));
+      if (p) fx.ring(p.x, p.y, 'danger');
+      ui.toast(isPower(o)
+        ? 'Estas pilas no alimentan nada todavía · usa «Conectar»'
+        : 'Este botón no controla ninguna tira · usa «Conectar»');
+      redraw = true;
+      return;
+    }
     o.mode = MODES[(MODES.indexOf(o.mode || 'off') + 1) % MODES.length];
     audio.play(o.mode === 'off' ? 'toggle' : 'light');
-    ui.toast(`${isPower(o) ? 'Pilas' : 'Interruptor'}: ${MODE_NAME[o.mode]}`);
+    ui.toast(`${isPower(o) ? 'Pilas' : 'Botón'}: ${MODE_NAME[o.mode]}`);
     store.commit(); ui.sync(); redraw = true;
+  },
+  setPose(id) {
+    const o = selObj(); if (!o) return;
+    const p = POSES.find(x => x.id === id);
+    if (!p) return;
+    applyRot(o, { ...p.rot }, 'libre');
+    clampObject(o, state.dims, scene.meshOf(o));
+    audio.play('place'); store.commit(); ui.sync(); redraw = true;
+    ui.toast(p.name);
   },
   setSwitchMode(m) {
     const o = selObj(); if (!o) return;
@@ -588,7 +630,7 @@ const app = {
     const o = selObj(); if (!o) return;
     state.linking = o.id;
     ui.open(null);
-    const what = isPower(o) ? 'un interruptor o una tira' : 'una tira de luces';
+    const what = isPower(o) ? 'un botón o una tira' : 'una tira de luces';
     ui.bar({ title: `Toca ${what}`, hint: 'para conectarlo · tócalo otra vez para quitarlo', ok: 'Terminar' },
       () => app.endLink(), () => app.endLink());
     ui.sync(); redraw = true;
@@ -598,14 +640,15 @@ const app = {
     const src = store.getObject(state.linking), target = store.getObject(id);
     if (!canLink(src, target)) {
       audio.play('error');
-      ui.toast(isPower(src) ? 'Conéctalo a un interruptor o a una tira' : 'Un interruptor solo alimenta tiras');
+      ui.toast(isPower(src) ? 'Conéctala a un botón o a una tira' : 'Un botón solo enciende tiras');
       return;
     }
     const list = state.links[src.id] || (state.links[src.id] = []);
     const i = list.indexOf(id);
-    if (i >= 0) { list.splice(i, 1); ui.toast('Conexión eliminada'); }
-    else { list.push(id); ui.toast('Conectado · enciéndelo desde su panel'); }
+    if (i >= 0) { list.splice(i, 1); ui.toast('Conexión quitada'); }
+    else { list.push(id); ui.toast('Conectado · púlsalo para encender'); }
     audio.play('success');
+    fx.flash();
     state.linking = null;                     // una conexión por vez: sin toques accidentales
     state.object = src.id;
     ui.bar(null);
@@ -677,6 +720,24 @@ const app = {
   reset() { store.resetAll(); after(); fx.flash(); audio.play('whoosh'); ui.toast('Diseño reiniciado'); },
   commit() { store.commit(); ui.sync(); },
 
+  /**
+   * Modo «afinando»: mientras se arrastra un valor la interfaz se aparta para
+   * dejar ver la caja, y vuelve sola al soltar.
+   */
+  tuning(on) {
+    clearTimeout(tuneT);
+    if (on) document.body.classList.add('tuning');
+    else tuneT = setTimeout(() => document.body.classList.remove('tuning'), 150);
+    redraw = true;
+  },
+  /** Vistazo breve a la caja al tocar un color o material. */
+  peek(ms = 900) {
+    document.body.classList.add('tuning');
+    clearTimeout(tuneT);
+    tuneT = setTimeout(() => document.body.classList.remove('tuning'), ms);
+    redraw = true;
+  },
+
   // ---- usados por gestos y manijas ----
   state, scene, cam, camera, surfaceAt, planeAt, touch, clampSticker,
   spotAt, ghostObj, getObject: store.getObject,
@@ -694,6 +755,21 @@ const ui = createUI(app);
 const overlay = createOverlay(app);
 const input = createInput(canvas, app);
 store.on(w => { redraw = true; if (w === 'history' || w === 'restore') ui.sync(); });
+
+// ---------------------------------------------------------------- resplandor
+// las luces encendidas tiñen la capa de brillo de la página: la escena "respira"
+const glowEl = document.querySelector('.glow');
+let glowNow = 0;
+function ambient(g) {
+  const want = g ? Math.min(1, g.power * 1.5) : 0;
+  glowNow += (want - glowNow) * .18;
+  if (Math.abs(want - glowNow) < .004) glowNow = want;
+  const c = g ? g.c : [1, .8, .55];
+  const rgb = c.map(v => Math.round(Math.min(1, v) * 255)).join(',');
+  glowEl.style.setProperty('--lit', glowNow.toFixed(3));
+  glowEl.style.setProperty('--lit-rgb', rgb);
+  if (glowNow !== want) redraw = true;
+}
 
 // ---------------------------------------------------------------- bucle
 addEventListener('resize', () => { redraw = true; });
@@ -752,6 +828,7 @@ function frame(now) {
     const c = camera();
     scene.draw(c, fast, clock);
     overlay.update(c);
+    ambient(scene.glow);
     redraw = moving;
     settleT = now;
     if (!canvas.classList.contains('ready')) {

@@ -27,6 +27,7 @@ export function newObject(o = {}) {
   const s = typeof o.scale === 'number' ? { x: o.scale, y: o.scale, z: o.scale } : o.scl;
   return {
     id: 'o' + (++objSeq), x: 0, y: 0, z: 0, ...o,
+    type: o.type === 'interruptor' ? 'boton' : o.type,   // diseños guardados antes del botón
     rot: { x: 0, y: 0, z: 0, ...r },
     scl: { x: 1, y: 1, z: 1, ...s },
   };

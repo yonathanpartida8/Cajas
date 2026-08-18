@@ -5,7 +5,7 @@ import { state, images, stickersOf, on } from './store.js';
 import { rayQuad, v3, add, scale, norm } from '../core/math3d.js';
 import {
   objectMesh, transform, collectLights, pickObject, objectCenter,
-  lightOf, lightConf, lightColor, buildStrip, isSource, hex2rgb,
+  lightOf, lightConf, lightColor, buildStrip, isSource, hex2rgb, birthScale, blipAmount,
 } from './objects.js';
 import { CATALOG } from '../objects/catalog.js';
 
@@ -23,6 +23,7 @@ export function createScene(renderer) {
   let faces = buildFaces(anim, { x: 0, y: 0, z: 0 }, shape());
   let shadowTex = null;
   let sketch = null;                 // malla temporal de la tira que se está dibujando
+  let glow = null;                   // color dominante de las luces encendidas
 
   const cached = (map, key, make, opts) => {
     if (!map.has(key)) map.set(key, renderer.texture(make(key), opts));
@@ -183,32 +184,55 @@ export function createScene(renderer) {
   /** Objetos 3D listos para dibujar (con su color, brillo y transformación). */
   function meshList(t) {
     const out = [];
+    const now = performance.now();
     const list = [...state.objects].sort((a, b) => (a.ghost ? 1 : 0) - (b.ghost ? 1 : 0));
+    let tint = null, power = 0;
+    const note = (c, w) => {                       // el resplandor general de la escena
+      const v = (c[0] + c[1] + c[2]) / 3 * w;
+      if (v > power) { power = v; tint = c; }
+    };
     for (const o of list) {
       const m = objectMesh(o, renderer);
-      const { model, nor } = transform(o);
-      let emissive = [0, 0, 0];
-      if (o.type === 'tira') emissive = lightColor(o.id, lightOf(o, state.objects, state.links), t, .2);
-      else if (isSource(o)) emissive = lightColor(o.id, lightConf(o), t, .5);
-      else if (CATALOG[o.type]?.light) emissive = lightColor(o.id, 'warm', t, o.x);
+      const { model, nor } = transform(o, birthScale(o.id, now));
+      let emissive = [0, 0, 0], lit = false;
+      if (o.type === 'tira') {
+        const conf = lightOf(o, state.objects, state.links);
+        emissive = lightColor(o.id, conf, t, .2);
+        lit = conf.mode !== 'off';
+        if (lit) note(emissive, o.bright ?? 1);
+      } else if (isSource(o)) {
+        emissive = lightColor(o.id, lightConf(o), t, .5);
+      } else if (CATALOG[o.type]?.light) {
+        emissive = lightColor(o.id, 'warm', t, o.x);
+        note(emissive, .45);
+      }
       out.push({
         mesh: m, model, nor,
         color: hex2rgb(o.color || '#ffffff'),
         emissive,
         alpha: o.ghost ? .6 : 1,
         xray: !!o.ghost,
-        hi: state.object === o.id ? .45 : 0,
+        hi: Math.max(state.object === o.id ? .45 : 0, blipAmount(o.id, now) * .9),
         gloss: o.type === 'tira' ? .3 : .14,
       });
+      // halo suave alrededor de cada foquito encendido
+      if (lit) {
+        out.push({
+          mesh: objectMesh(o, renderer, 'glow'), model, nor,
+          color: [1, 1, 1], emissive,
+          alpha: .16 + .1 * Math.min(1, o.bright ?? 1), hi: 0, gloss: 0,
+        });
+      }
     }
     const sk = sketchMesh();
     if (sk) {
       out.push({
         mesh: sk, ...IDENTITY,
-        color: hex2rgb(state.drawing.color || '#fff3d6'),
-        emissive: [1, .78, .48], alpha: .85, xray: true, hi: .3, gloss: .3,
+        color: hex2rgb(state.drawing.color || '#3a2a20'),
+        emissive: [1, .78, .48], alpha: .9, xray: true, hi: .3, gloss: .3,
       });
     }
+    glow = tint ? { c: tint, power } : null;
     return out;
   }
 
@@ -279,6 +303,7 @@ export function createScene(renderer) {
     centerOf: o => objectCenter(o, objectMesh(o, renderer)),
     get faces() { return faces; },
     get anim() { return anim; },
+    get glow() { return glow; },
     update, draw, pick, pickSticker, stickerBox, stickerFrame, settled,
     dirty: id => dirty.add(id),
     markAll,

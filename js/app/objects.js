@@ -2,7 +2,7 @@
 // los tres ejes, materiales, interacción, conexiones eléctricas, luz y sonido.
 // Todo objeto nuevo del catálogo hereda estos controles sin tocar nada más.
 import { CATALOG, propsOf } from '../objects/catalog.js';
-import { mesh, pack, ball, polyTube } from '../objects/shapes.js';
+import { mesh, pack, ball, polyTube, smoothPath } from '../objects/shapes.js';
 import { S } from '../box/model.js';
 
 // ---------------------------------------------------------------- papeles
@@ -20,9 +20,9 @@ export const MODE_NAME = {
 
 /** Modos de rotación: cómo responde el giro al dedo y a los controles. */
 export const ROT_MODES = [
-  { id: 'libre', name: 'Libre', hint: 'gira en cualquier dirección' },
-  { id: 'asistida', name: 'Asistida', hint: 'lo mantiene derecho' },
-  { id: 'simetrica', name: 'Simétrica', hint: 'ángulos de 15°' },
+  { id: 'libre', name: 'Libre', hint: 'gira hacia donde quieras, sin límites' },
+  { id: 'asistida', name: 'Asistida', hint: 'se alinea sola con las caras y las diagonales' },
+  { id: 'simetrica', name: 'Simétrica', hint: 'ángulos exactos de 15°' },
 ];
 
 const cache = new Map();       // clave → malla empaquetada (con su VAO dentro)
@@ -40,19 +40,23 @@ export const canLink = (a, b) => !!a && !!b && a.id !== b.id
   && ((isPower(a) && (isSwitch(b) || isStrip(b))) || (isSwitch(a) && isStrip(b)));
 
 /** Clave de caché: todo lo que cambia la geometría o los colores fijos. */
-const key = o => o.type === 'tira'
-  ? `tira|${o.color}|${o.thick}|${o.path.map(p => p.map(v => v.toFixed(1)).join(',')).join(';')}`
-  : `${o.type}|${o.color}|${propsOf(o.type).map(p => o[p.k] ?? p.def).join('|')}`;
+const key = (o, kind) => {
+  const props = propsOf(o.type).map(p => o[p.k] ?? p.def).join('|');
+  return o.type === 'tira'
+    ? `${kind}|${props}|${o.path.map(p => p.map(v => v.toFixed(1)).join(',')).join(';')}`
+    : `${o.type}|${o.color}|${props}`;
+};
 
 /** Malla del objeto (se construye una vez por combinación). */
-export function objectMesh(o, renderer) {
-  const k = key(o);
+export function objectMesh(o, renderer, kind = 'tira') {
+  const k = key(o, kind);
   let m = cache.get(k);
   if (m) return m;
-  m = o.type === 'tira' ? buildStrip(o) : CATALOG[o.type].build(o);
+  m = o.type !== 'tira' ? CATALOG[o.type].build(o)
+    : kind === 'glow' ? buildGlow(o) : buildStrip(o);
   measure(m);
   cache.set(k, m);
-  if (cache.size > 48) {                       // libera las mallas más antiguas
+  if (cache.size > 56) {                       // libera las mallas más antiguas
     const [oldK, oldM] = cache.entries().next().value;
     cache.delete(oldK);
     renderer?.dispose(oldM);
@@ -72,20 +76,61 @@ function measure(m) {
   return m;
 }
 
-/** Tira de luces: cable a lo largo del trazado + bombillas cada pocos cm. */
-export function buildStrip(o) {
-  const M = mesh();
-  const pts = o.path.map(p => [p[0], p[1], p[2]]);
-  polyTube(M, { points: pts, r: (o.thick ?? .5) / 2, sides: 6, color: '#4a463d', mix: 0 });
-  let acc = 0;
-  const gap = Math.max(2.2, (o.thick ?? .5) * 5);
+// ---------------------------------------------------------------- guirnalda
+const stripDef = o => ({
+  thick: o.thick ?? .3,
+  bulb: o.bulb ?? .3,
+  gap: o.gap ?? 1.4,
+  bright: o.bright ?? 1,
+});
+
+// el trazado suavizado se cachea aparte para no ensuciar el objeto (ni el historial)
+const curves = new Map();
+
+/** Trazado suavizado del cable (el dedo tiembla; la guirnalda no). */
+export function stripCurve(o) {
+  const k = `${o.id}|${o.path.length}`;
+  let c = curves.get(k);
+  if (!c) {
+    c = smoothPath(o.path, .55);
+    if (curves.size > 40) curves.clear();
+    curves.set(k, c);
+  }
+  return c;
+}
+
+/** Posición de cada foquito a lo largo del recorrido. */
+export function stripBulbs(o) {
+  const pts = stripCurve(o), { gap } = stripDef(o);
+  const out = [];
+  let acc = gap;                                   // el primero, casi al principio
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
     acc += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    if (acc >= gap) {
-      acc = 0;
-      ball(M, { x: b[0], y: b[1], z: b[2], r: (o.thick ?? .5) * .95, color: '#fff6e0', mix: 0, emi: 1, seg: 8 });
-    }
+    if (acc >= gap) { acc = 0; out.push(b); }
+  }
+  return out;
+}
+
+/** Guirnalda: cable fino y muchos foquitos pequeños muy juntos. */
+export function buildStrip(o) {
+  const M = mesh();
+  const { thick, bulb } = stripDef(o);
+  // el cable toma el color elegido (blanco, cobre, verde…); los foquitos, el de la luz
+  polyTube(M, { points: stripCurve(o), r: thick / 2, sides: 6, color: '#ffffff', mix: 1 });
+  for (const p of stripBulbs(o)) {
+    ball(M, { x: p[0], y: p[1], z: p[2], ax: bulb * .82, ay: bulb, az: bulb * .82, color: '#fff8e8', mix: 0, emi: 1, seg: 7 });
+    ball(M, { x: p[0], y: p[1] - bulb * .78, z: p[2], r: bulb * .42, color: '#2e2b25', mix: 0, seg: 6 });   // casquillo
+  }
+  return measure(pack(M));
+}
+
+/** Halo translúcido alrededor de cada foquito: el brillo suave de la guirnalda. */
+export function buildGlow(o) {
+  const M = mesh();
+  const { bulb } = stripDef(o);
+  for (const p of stripBulbs(o)) {
+    ball(M, { x: p[0], y: p[1], z: p[2], r: bulb * 2.1, color: '#ffffff', mix: 0, emi: 1, seg: 6 });
   }
   return measure(pack(M));
 }
@@ -116,11 +161,11 @@ export function rotMatrix(r) {
   ];
 }
 
-/** Matriz de modelo (cm → mundo) y su matriz de normales. */
-export function transform(o) {
+/** Matriz de modelo (cm → mundo) y su matriz de normales. `k` escala la entrada animada. */
+export function transform(o, k = 1) {
   normalize(o);
   const m = rotMatrix(o.rot);
-  const sx = o.scl.x * S, sy = o.scl.y * S, sz = o.scl.z * S;
+  const sx = o.scl.x * k * S, sy = o.scl.y * k * S, sz = o.scl.z * k * S;
   const model = new Float32Array([
     m[0] * sx, m[3] * sx, m[6] * sx, 0,
     m[1] * sy, m[4] * sy, m[7] * sy, 0,
@@ -143,20 +188,19 @@ const snap = (a, step) => Math.round(a / step) * step;
 const clampN = (v, a, b) => v < a ? a : v > b ? b : v;
 
 /**
- * Aplica el modo de rotación elegido.
- *   libre     → tal cual
- *   asistida  → detecta el eje dominante, limita la inclinación y la endereza sola
+ * Aplica el modo de rotación elegido. Ninguno limita hacia dónde puedes girar:
+ * un objeto siempre puede acostarse, ponerse boca abajo o quedar en diagonal.
+ *   libre     → exactamente lo que hace el dedo
+ *   asistida  → imán suave hacia 0°, 45°, 90°, 135°, 180°… para alinear con las caras
  *   simétrica → todos los ángulos en múltiplos de 15°
  */
 export function applyRot(o, rot, mode = 'libre') {
   normalize(o);
   let { x, y, z } = rot;
   if (mode === 'asistida') {
-    const q = Math.PI / 2, near = .22;                      // ~12° de imán hacia el eje
-    x = clampN(wrap(x), -q, q); z = clampN(wrap(z), -q, q);
-    if (Math.abs(x - snap(x, q)) < near) x = snap(x, q);
-    if (Math.abs(z - snap(z, q)) < near) z = snap(z, q);
-    if (Math.abs(x) > Math.abs(z)) z = snap(z, q); else x = snap(x, q);   // un solo eje inclinado
+    const q = Math.PI / 4, near = .13;                      // ~7,5° de imán hacia el ángulo
+    const magnet = a => (Math.abs(wrap(a) - snap(wrap(a), q)) < near ? snap(wrap(a), q) : wrap(a));
+    x = magnet(x); y = magnet(y); z = magnet(z);
   } else if (mode === 'simetrica') {
     const q = Math.PI / 12;
     x = snap(wrap(x), q); y = snap(wrap(y), q); z = snap(wrap(z), q);
@@ -164,6 +208,43 @@ export function applyRot(o, rot, mode = 'libre') {
   o.rot = { x: wrap(x), y: wrap(y), z: wrap(z) };
   return o;
 }
+
+// ------------------------------------------------------------ entrada animada
+const births = new Map();
+/** Marca un objeto recién colocado para que aparezca creciendo. */
+export const birth = id => births.set(id, performance.now());
+export const growing = () => births.size > 0;
+
+/** Factor de escala de la animación de entrada (1 = ya colocado). */
+export function birthScale(id, now = performance.now()) {
+  const t0 = births.get(id);
+  if (t0 === undefined) return 1;
+  const k = (now - t0) / 460;
+  if (k >= 1) { births.delete(id); return 1; }
+  const e = 1 - Math.pow(1 - k, 3);                  // frena al llegar
+  return .3 + .7 * e + Math.sin(k * Math.PI) * .11;  // con un rebotito
+}
+
+// aviso de «no estoy conectado a nada»: un parpadeo corto, sin cambiar nada
+const blips = new Map();
+export const blip = id => blips.set(id, performance.now());
+export function blipAmount(id, now = performance.now()) {
+  const t0 = blips.get(id);
+  if (t0 === undefined) return 0;
+  const k = (now - t0) / 620;
+  if (k >= 1) { blips.delete(id); return 0; }
+  return Math.abs(Math.sin(k * Math.PI * 3)) * (1 - k);
+}
+
+/** Poses de un toque: la forma rápida de acostar o volcar un objeto. */
+export const POSES = [
+  { id: 'pie', name: 'De pie', emoji: '🧍', rot: { x: 0, y: 0, z: 0 } },
+  { id: 'acostado', name: 'Acostado', emoji: '🛏️', rot: { x: -Math.PI / 2, y: 0, z: 0 } },
+  { id: 'boca', name: 'Boca abajo', emoji: '🙃', rot: { x: Math.PI / 2, y: 0, z: 0 } },
+  { id: 'lado', name: 'De lado', emoji: '↔️', rot: { x: 0, y: 0, z: Math.PI / 2 } },
+  { id: 'reves', name: 'Del revés', emoji: '🔄', rot: { x: Math.PI, y: 0, z: 0 } },
+  { id: 'diagonal', name: 'Diagonal', emoji: '📐', rot: { x: -.6, y: .7, z: .35 } },
+];
 
 /** Deja el objeto como recién colocado (giro y tamaño de fábrica). */
 export function resetTransform(o, what = 'all') {
@@ -330,33 +411,45 @@ export function lightColor(id, cfg, t, seed = 0) {
 const feeders = (target, objects, links) =>
   objects.filter(o => !o.ghost && (links[o.id] || []).includes(target.id));
 
+/** ¿Tiene corriente este botón? Solo o con pilas detrás, pero nunca con las pilas apagadas. */
+export function switchLive(sw, objects, links) {
+  const bats = feeders(sw, objects, links).filter(isPower);
+  return !bats.length || bats.some(b => (b.mode || 'off') !== 'off');
+}
+
 /**
- * Energía que llega a una tira (o a un interruptor).
- * Solo las pilas dan corriente: pilas → tira, o pilas → interruptor → tira.
- * Sin fuente, la tira permanece apagada.
+ * Energía que llega a una tira. Cadenas válidas:
+ *   pilas → tira      ·  botón → tira      ·  pilas → botón → tira
+ * Sin nada conectado, la tira permanece apagada.
  */
 export function lightOf(target, objects, links) {
   for (const f of feeders(target, objects, links)) {
     if (isPower(f)) return lightConf(f);
-    if (isSwitch(f) && feeders(f, objects, links).some(b => isPower(b) && (b.mode || 'off') !== 'off')) {
-      return lightConf(f);
-    }
+    if (isSwitch(f) && switchLive(f, objects, links)) return lightConf(f);
   }
   return OFF_CONF;
 }
 
+/** Lo que cuelga de un objeto (lo que alimenta o controla). */
+export const targetsOf = (o, links) => links[o.id] || [];
+
 /** Estado de conexión de un objeto, para los avisos de la interfaz. */
 export function wiring(o, objects, links) {
+  const out = targetsOf(o, links);
   if (isStrip(o)) {
-    const src = feeders(o, objects, links);
     const conf = lightOf(o, objects, links);
-    return { sources: src, powered: conf.mode !== 'off', conf };
+    return { sources: feeders(o, objects, links), targets: [], powered: conf.mode !== 'off', conf };
   }
   if (isSwitch(o)) {
-    const bat = feeders(o, objects, links).filter(isPower);
-    return { sources: bat, powered: bat.some(b => (b.mode || 'off') !== 'off'), conf: lightConf(o) };
+    return {
+      sources: feeders(o, objects, links).filter(isPower), targets: out,
+      powered: !!out.length && switchLive(o, objects, links), conf: lightConf(o),
+    };
   }
-  return { sources: [], powered: isPower(o) && (o.mode || 'off') !== 'off', conf: lightConf(o) };
+  return {
+    sources: [], targets: out,
+    powered: isPower(o) && !!out.length && (o.mode || 'off') !== 'off', conf: lightConf(o),
+  };
 }
 
 /** Luces puntuales activas (posición en mundo + color ya atenuado). */
@@ -367,11 +460,13 @@ export function collectLights(objects, links, t) {
     if (o.type === 'tira') {
       const conf = lightOf(o, objects, links);
       if (conf.mode === 'off') continue;
-      const step = Math.max(1, Math.floor(o.path.length / 3));
-      for (let i = 0; i < o.path.length && out.length < 8; i += step) {
-        const p = o.path[i];
-        const c = lightColor(`${o.id}#${i}`, conf, t, i * .13);
-        out.push({ p: { x: p[0] * S, y: p[1] * S, z: p[2] * S }, c: mul(c, .5) });
+      const b = o.bright ?? 1;
+      const pts = stripCurve(o);
+      const step = Math.max(1, Math.floor(pts.length / 4));
+      for (let i = 0; i < pts.length && out.length < 8; i += step) {
+        const p = pts[i];
+        const c = lightColor(`${o.id}#${i}`, conf, t, i * .07);
+        out.push({ p: { x: p[0] * S, y: p[1] * S, z: p[2] * S }, c: mul(c, .5 * b) });
       }
       continue;
     }
@@ -391,7 +486,7 @@ export function collectLights(objects, links, t) {
 export function hasAnimation(objects, links) {
   const was = animating;
   animating = false;
-  return was || objects.some(o =>
+  return was || growing() || blips.size > 0 || objects.some(o =>
     (o.type === 'tira' && lightOf(o, objects, links).mode !== 'off')
     || (isSource(o) && (o.mode || 'off') !== 'off')
     || CATALOG[o.type]?.light);

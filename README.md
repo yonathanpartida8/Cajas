@@ -23,13 +23,16 @@ Cada gesto significa una sola cosa y ninguno pisa a los demás.
 | Gesto | Acción |
 |---|---|
 | Tocar | Seleccionar superficie, imagen u objeto |
+| Tocar un botón o una caja de pilas | Encender / cambiar de modo las luces conectadas |
 | Pulsación larga sobre un objeto | Abrir su panel de ajustes |
 | Arrastrar sobre un objeto | Moverlo (la cámara **no** se mueve) |
 | Arrastrar en cualquier otro sitio | Girar la vista, con zona muerta e inercia |
 | Pellizcar con dos dedos | Acercar y alejar |
 | Girar con dos dedos | Rotar la vista |
 | Mover dos dedos juntos | Desplazar la vista |
-| Dos dedos sobre el objeto elegido | Escalarlo y girarlo a la vez |
+| Pellizcar sobre el objeto elegido | Escalarlo |
+| Girar dos dedos sobre el objeto | Rotarlo sobre su eje vertical |
+| Subir o bajar dos dedos sobre el objeto | Inclinarlo hacia delante y hacia atrás |
 | Arrastrar una imagen | Moverla; si el dedo pasa a otra superficie, se muda a ella |
 | Arrastrar una manija de esquina | Cambiar el tamaño (proporción bloqueable) |
 | Tocar la tapa → «Mover» | Habilita arrastrarla libremente |
@@ -43,6 +46,20 @@ Detalles que se notan al usarla:
   sigue al dedo sin retraso.
 * Mientras editas algo dentro de la caja, las paredes que tapan la vista se vuelven
   translúcidas por sí solas (las dos caras de la pared a la vez).
+
+### La interfaz se aparta cuando ajustas
+
+En cuanto empiezas a mover un valor —el grosor, la escala, la posición, el giro, la
+intensidad…— **el panel se vuelve casi invisible**: desaparecen el cristal, el
+desenfoque, los títulos y el resto de controles, y solo queda flotando la fila que
+tienes bajo el dedo. La caja se ve nítida y entera mientras la ajustas. Al soltar, todo
+vuelve suavemente a su sitio. Elegir un color, un material o un acabado también da un
+vistazo breve a la caja.
+
+En pantallas grandes el panel se coloca a un lado en vez de tapar la parte inferior, y
+hay atajos de teclado: flechas para mover, `Q`/`E` para girar, `W`/`S` para subir y
+bajar, `D` duplicar, `L` fijar, `Supr` borrar, `Ctrl+Z` / `Ctrl+Shift+Z` deshacer y
+rehacer, `Esc` para soltar la selección.
 
 ### Colocar imágenes: sin adivinar
 
@@ -85,10 +102,13 @@ organizados en pestañas dentro de su panel:
   fondo, duplicar y fijar.
 * **Mover** — posición numérica en los tres ejes (X izquierda/derecha, Y altura,
   Z fondo/frente) más el carril vertical de altura y el arrastre con el dedo.
-* **Girar** — inclinación, giro y ladeo **en grados**, con tres modos:
-  * *Libre*: gira en cualquier dirección y combinación.
-  * *Asistida*: detecta el eje dominante, limita la inclinación a ±90° y endereza el
-    objeto solo cuando se acerca a un ángulo recto.
+* **Girar** — inclinación, giro y ladeo **en grados**, sin ninguna restricción: un objeto
+  puede acostarse, ponerse boca abajo, del revés, de lado o en diagonal, y combinar los
+  tres ejes a la vez. Hay **poses de un toque** (de pie, acostado, boca abajo, de lado,
+  del revés, diagonal) y tres modos:
+  * *Libre*: exactamente lo que hace el dedo.
+  * *Asistida*: imán suave hacia 0°, 45°, 90°, 135°… para alinearlo con las caras de la
+    caja sin quitarle libertad.
   * *Simétrica*: todos los ángulos caen en múltiplos de 15°.
 * **Tamaño** — escala uniforme y escala **independiente** en anchura, altura y
   profundidad.
@@ -99,32 +119,48 @@ Cada pestaña tiene su botón **Restablecer**, y también están *duplicar*, *fi
 
 ### Papel picado
 
-El relleno de virutas es un objeto 3D de verdad, no una textura: un puñado de tiras
-finas, rizadas y enredadas, cada una con su giro y su sitio. Sus controles son
-**cantidad** (1 a 48 piezas), **anchura**, **altura**, **grosor** y **reparto** (cuánto
-se esparce el montón). Con cantidad 1 tienes una sola viruta; con 40, un relleno
-completo. Se puede duplicar, girar libremente y repartir por la caja, y en la
-biblioteca hay un interruptor **«Colocar varios seguidos»** para llenar rápido.
+Son **papelitos planos de verdad**: láminas finísimas y ligeramente curvadas, no bolitas
+ni confeti grueso. Cada uno tiene su recorte, su giro y su sitio, y se reparten por igual
+en toda la zona (nunca se amontonan en el centro). Sus controles:
 
-### Tiras de luces, interruptores, pilas y conexiones
+| Control | Qué hace |
+|---|---|
+| Cantidad | de 1 a 120 papelitos |
+| Recorte | mezcla, tiras, rectos, puntas, rombos u hojas |
+| Colores | un solo tono, variaciones del elegido o **varios colores a la vez** |
+| Ancho · Largo · Grosor | el tamaño de cada papelito |
+| Extensión | el radio por el que se reparten |
+| Relleno | la altura del montón |
+
+Y tres atajos que lo hacen todo de golpe según el tamaño real de tu caja:
+**Poco** (decoración sutil), **Medio** (interior decorado) y **Mucho** (rellenito).
+Se puede duplicar, girar libremente y colocar en la zona que quieras, y en la biblioteca
+hay un interruptor **«Colocar varios seguidos»** para llenar rápido.
+
+### Guirnaldas de luces, botones, pilas y conexiones
 
 * **Tira de luces**: se **dibuja con el dedo** por el interior de la caja y se va
-  formando **en tiempo real** bajo el dedo, no al soltar. El trazado se convierte en un
-  cable 3D con bombillas cada pocos centímetros.
+  formando **en tiempo real** bajo el dedo, no al soltar. El trazo se suaviza con un
+  spline, así que la guirnalda curva y dobla limpiamente aunque te tiemble el pulso.
+* No es una línea luminosa: es un **cable fino con muchos foquitos pequeños y juntos**,
+  cada uno con su casquillo y su **halo de luz** alrededor. Puedes ajustar el grosor del
+  cable, el tamaño de los foquitos, su separación y el brillo de esa tira.
 * Una tira recién creada **nace apagada**: no tiene de dónde sacar corriente.
-* **Caja de pilas** 🔋 — una cajita con cuatro pilas dentro, pequeña para esconderla.
-  Es la única fuente de energía.
-* **Interruptor** 🎚️ — pequeño, se toca para cambiar de modo.
-* **Conexiones inteligentes**: `pilas → tira` o `pilas → interruptor → tira`. Sin pilas
-  con corriente, nada enciende; si apagas las pilas se apaga todo lo que cuelga de
-  ellas; y si quitas una conexión, lo que dependía de ella se apaga. Se hacen con
-  «Conectar» y tocando el destino, se quitan tocándolo otra vez, y se ven como cables
-  punteados que **brillan cuando llevan corriente**.
-* **Seis modos de luz** con transición suave entre uno y otro: cálida, cálida con
-  parpadeo, colores cambiantes, blanca, blanca con parpadeo y **a mi gusto** (color
-  exacto, intensidad y velocidad de parpadeo, con 0 Hz = luz fija).
-* Las bombillas **iluminan de verdad**: cada tira aporta luces puntuales al motor
-  (hasta 8 simultáneas) que bañan el cartón y los objetos cercanos.
+* **Botón** 🔘 — pequeño y minimalista, se pulsa tocándolo. Si **no tiene ninguna tira
+  conectada no hace absolutamente nada**: parpadea un momento avisando y no enciende
+  nada. Manteniéndolo pulsado se abren sus controles de iluminación.
+* **Caja de pilas** 🔋 — pequeña, con cuatro pilas visibles y su propio botón integrado.
+  Sigue la misma regla: sin nada conectado, no hace nada.
+* **Conexiones**: `botón → tira`, `pilas → tira` o `pilas → botón → tira`. Un mismo botón
+  puede controlar varias tiras y unas pilas pueden alimentar varias cosas. Se crean con
+  «Conectar» y tocando el destino, se quitan tocándolo otra vez, y se dibujan como cables
+  punteados que **brillan cuando llevan corriente**. Sin conexión no hay iluminación.
+* **Siete modos** que el botón recorre en orden, con transición suave entre ellos:
+  cálida → cálida parpadeante → colores cambiantes → blanca → blanca parpadeante →
+  a mi gusto (color exacto, intensidad y velocidad de parpadeo) → apagado.
+* Los foquitos **iluminan de verdad**: cada tira aporta luces puntuales al motor (hasta 8
+  simultáneas) que bañan el cartón y los objetos cercanos, y el resplandor del fondo de
+  la pantalla se tiñe con el color de las luces encendidas.
 
 ### Forrar el cartón
 
@@ -195,8 +231,12 @@ js/
   giro son exactos aunque la caja esté en perspectiva.
 * Se dibuja **solo cuando algo cambia**: en reposo la app no consume GPU. El parpadeo de
   las luces refresca a ~20 fps en vez de 60, las transiciones de color se interpolan en
-  el propio fotograma y las mallas se cachean por tipo, color y medidas. Una escena con
-  9 objetos y 40 virutas de papel ronda los 6 600 triángulos.
+  el propio fotograma y las mallas se cachean por tipo, color y medidas (guirnalda y halo
+  por separado). Una escena con 9 objetos y 40 papelitos ronda los 5 200 triángulos; con
+  120 papelitos y una guirnalda larga, unos 12 500.
+* Los objetos **aparecen creciendo** con un pequeño rebote al colocarse, y un botón sin
+  conexión responde con un parpadeo corto: ambas animaciones viven fuera del estado, así
+  que no ensucian el historial.
 
 ### Sonido, vibración y movimiento
 
@@ -225,10 +265,11 @@ lógica:
 
 * **Más objetos 3D** → una entrada en `CATALOG` (`objects/catalog.js`) con su categoría,
   emoji, color y función `build()`. Aparece sola en la biblioteca y hereda colocación,
-  posición/giro/escala en tres ejes, modos de rotación, color, duplicar, fijar, borrar,
-  sonidos y conexiones.
-* **Controles propios de un objeto** → añade `props: [{k, label, hint, min, max, step,
-  def}]` a su entrada: las filas `− valor +` se generan solas en su panel y entran en la
+  posición/giro/escala en tres ejes, modos de rotación, poses, color, duplicar, fijar,
+  borrar, animación de entrada, sonidos y conexiones.
+* **Controles propios de un objeto** → añade `props` a su entrada: `{k, label, hint, min,
+  max, step, def}` genera una fila `− valor +`, y `{k, label, hint, def, choices:[{v,
+  name}]}` genera una fila de opciones. Ambas se dibujan solas en su panel y entran en la
   clave de caché de la malla.
 * **Objetos eléctricos** → marca la entrada con `switch: true` (interruptor),
   `power: true` (fuente de energía) o `light: {...}` (emite luz propia). El grafo de

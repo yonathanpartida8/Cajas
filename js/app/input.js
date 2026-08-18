@@ -149,12 +149,17 @@ export function createInput(canvas, api) {
     const d = spread(), a = twist(), c = centroid();
     if (mode === 'pinch-obj') {
       const o = gesture.obj;
-      if (gesture.d > 8) {
+      if (gesture.d > 8) {                       // pellizcar → escalar
         const f = clamp(d / gesture.d, .2, 6);
         for (const k of ['x', 'y', 'z']) o.scl[k] = clamp(gesture.scl[k] * f, .2, 4);
-        api.setObjRot(o, { ...gesture.rot, y: gesture.rot.y + (a - gesture.a) });
-        api.clampObject(o);
       }
+      // girar con dos dedos → eje vertical · subirlos o bajarlos → inclinar
+      api.setObjRot(o, {
+        x: gesture.rot.x + (c.y - gesture.c.y) * .0075,
+        y: gesture.rot.y + (a - gesture.a),
+        z: gesture.rot.z,
+      });
+      api.clampObject(o);
       return api.redraw();
     }
     if (mode === 'pinch-img') {

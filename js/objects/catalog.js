@@ -7,7 +7,7 @@
 //   switch  → es un interruptor: enciende lo que tenga conectado
 //   power   → es una fuente de energía (caja de pilas)
 //   tool    → no es un objeto que se coloque, sino una herramienta del dock
-import { mesh, pack, box, ball, tube, ring, extrude, ribbon, heartPath, starPath } from './shapes.js';
+import { mesh, pack, box, ball, tube, ring, extrude, paper, heartPath, starPath, CUT_NAMES } from './shapes.js';
 
 export const CATEGORIES = [
   { id: 'amor', name: 'Amor', emoji: '💕' },
@@ -15,10 +15,11 @@ export const CATEGORIES = [
   { id: 'cartas', name: 'Cartas', emoji: '💌' },
   { id: 'flores', name: 'Flores', emoji: '🌹' },
   { id: 'regalos', name: 'Regalos', emoji: '🎁' },
+  { id: 'papel', name: 'Papel', emoji: '📝' },
   { id: 'luces', name: 'Luces', emoji: '💡' },
   { id: 'deco', name: 'Decoración', emoji: '🎀' },
   { id: 'fotos', name: 'Fotos', emoji: '🖼️' },
-  { id: 'materiales', name: 'Materiales', emoji: '📦' },
+  { id: 'materiales', name: 'Materiales', emoji: '🎨' },
 ];
 
 const CREAM = '#f6e7cf', DARK = '#3a2a20', GREEN = '#5f8a4a', GOLD = '#d8a24a';
@@ -41,6 +42,14 @@ function rng(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** Tonos de papel picado: uno solo, variaciones del elegido o mezcla alegre. */
+const CONFETTI = ['#ffffff', '#fbe3e8', '#f2a5b8', '#f6d186', '#bfe0c4', '#bcd3f0', '#d9c3f0'];
+function confetti(base, varia, r) {
+  if (varia >= 2) return r() < .7 ? CONFETTI[(r() * CONFETTI.length) | 0] : shade(base, .9 + r() * .22);
+  if (varia >= 1) return shade(base, .84 + r() * .32);
+  return base;
 }
 
 /** Cada objeto se construye en centímetros, a su tamaño natural. */
@@ -169,34 +178,48 @@ export const CATALOG = {
     },
   },
 
-  // ---------------------------------------------------------------- relleno
+  // ---------------------------------------------------------------- papel picado
   papel: {
-    name: 'Papel picado', emoji: '🎊', cat: 'deco', color: '#ffffff',
+    name: 'Papel picado', emoji: '🎊', cat: 'papel', color: '#ffffff',
     props: [
-      { k: 'count', label: 'Cantidad', hint: 'trozos de papel', min: 1, max: 48, step: 1, def: 14, unit: '' },
-      { k: 'pw', label: 'Anchura', hint: 'de cada tira', min: .3, max: 4, step: .1, def: .9 },
-      { k: 'ph', label: 'Altura', hint: 'largo de la tira', min: 1.5, max: 20, step: .5, def: 7 },
-      { k: 'pt', label: 'Grosor', hint: 'del papel', min: .02, max: .6, step: .02, def: .08 },
-      { k: 'spread', label: 'Reparto', hint: 'cuánto se esparce', min: 0, max: 14, step: .5, def: 4 },
+      { k: 'count', label: 'Cantidad', hint: 'papelitos', min: 1, max: 120, step: 1, def: 40, unit: '' },
+      { k: 'forma', label: 'Recorte', hint: 'forma de los papelitos', def: 'mezcla', choices: [
+        { v: 'mezcla', name: 'Mezcla' }, { v: 'tira', name: 'Tiras' }, { v: 'rect', name: 'Rectos' },
+        { v: 'punta', name: 'Puntas' }, { v: 'rombo', name: 'Rombos' }, { v: 'hoja', name: 'Hojas' },
+      ] },
+      { k: 'variedad', label: 'Colores', hint: 'tonos a la vez', def: 1, choices: [
+        { v: 0, name: 'Uno' }, { v: 1, name: 'Tonos' }, { v: 2, name: 'Varios' },
+      ] },
+      { k: 'pw', label: 'Ancho', hint: 'de cada papelito', min: .2, max: 3, step: .1, def: .7 },
+      { k: 'ph', label: 'Largo', hint: 'de cada papelito', min: .5, max: 14, step: .5, def: 4 },
+      { k: 'pt', label: 'Grosor', hint: 'papel finísimo', min: .01, max: .3, step: .01, def: .04 },
+      { k: 'spread', label: 'Extensión', hint: 'cuánto se reparte', min: 0, max: 40, step: 1, def: 9 },
+      { k: 'layer', label: 'Relleno', hint: 'altura del montón', min: 0, max: 14, step: .5, def: 1.5 },
     ],
-    // Virutas rizadas como las del relleno de verdad: tiras finas, largas y
-    // enredadas, cada una con su propio giro y su sitio dentro del montón.
+    // Papelitos planos y finísimos, repartidos por igual en toda la zona
+    // (raíz cuadrada del radio) para que no se amontonen en el centro.
     build: o => {
       const M = mesh();
-      const n = Math.round(o.count ?? 14);
-      const w = o.pw ?? .9, h = o.ph ?? 7, d = (o.pt ?? .08) / 2, sp = o.spread ?? 4;
-      const r = rng(n * 977 + Math.round(w * 100) * 31 + Math.round(h * 10) * 7 + Math.round(sp * 10));
+      const n = Math.round(o.count ?? 40);
+      const w = o.pw ?? .7, h = o.ph ?? 4, d = Math.max(.004, (o.pt ?? .04) / 2);
+      const sp = o.spread ?? 9, lay = o.layer ?? 1.5;
+      const forma = o.forma ?? 'mezcla', varia = +(o.variedad ?? 1);
+      const cuts = forma === 'mezcla' ? CUT_NAMES : [forma];
+      const r = rng(n * 131 + Math.round(w * 10) * 17 + Math.round(h * 10) * 7
+        + Math.round(sp * 10) * 3 + Math.round(lay * 10) * 11 + cuts.length * 29 + varia * 61);
+      const revuelto = lay > .8 ? 1.35 : .45;
       for (let i = 0; i < n; i++) {
         const a = r() * TAU, rad = Math.sqrt(r()) * sp;
-        const len = h * (.6 + r() * .8);
-        ribbon(M, {
-          w, h: len, d, twist: 2 + r() * 4, seg: 7,
-          color: i % 3 === 0 ? shade(o.color, .92) : (i % 5 === 0 ? shade(o.color, 1.06) : o.color),
+        paper(M, {
+          w: w * (.72 + r() * .66), h: h * (.55 + r() * .95), d,
+          bend: .1 + r() * .5, twist: (r() - .5) * 2.6,
+          shape: cuts[(r() * cuts.length) | 0], seg: 5,
+          color: confetti(o.color, varia, r),
           x: Math.cos(a) * rad, z: Math.sin(a) * rad,
-          y: d + w * .5 + r() * w * 1.6 + i * .015,
-          rx: Math.PI / 2 + (r() - .5) * 1.5,
+          y: d + r() * r() * lay + i * .004,          // casi todos abajo, alguno encima
+          rx: Math.PI / 2 + (r() - .5) * revuelto,
           ry: r() * TAU,
-          rz: (r() - .5) * 1.1,
+          rz: (r() - .5) * 1.3,
         });
       }
       return pack(M);
@@ -204,14 +227,15 @@ export const CATALOG = {
   },
 
   // ---------------------------------------------------------------- eléctricos
-  interruptor: {
-    name: 'Interruptor', emoji: '🎚️', cat: 'luces', color: '#efe3cf', switch: true,
+  boton: {
+    name: 'Botón', emoji: '🔘', cat: 'luces', color: '#f3e7d3', switch: true,
     build: o => {
       const M = mesh(), c = o.color;
-      box(M, { w: 3, h: .9, d: 2.2, y: .45, color: c });
-      box(M, { w: 2.2, h: .45, d: 1.5, y: 1.08, color: shade(c, .93) });
-      box(M, { w: .85, h: 1.2, d: .7, y: 1.7, z: .1, rx: -.3, color: shade(c, .78) });
-      ball(M, { x: 1.05, y: 1.3, z: .42, r: .22, color: '#ffffff', mix: 0, emi: 1, seg: 8 });
+      tube(M, { r: 1.2, h: .4, y: .2, color: shade(c, .8), seg: 22 });              // peana
+      tube(M, { r: 1.05, h: .34, y: .5, color: shade(c, .92), seg: 22 });           // aro
+      ring(M, { R: .95, r: .09, y: .56, rx: Math.PI / 2, color: '#ffffff', mix: 0, emi: 1, seg: 24, side: 5 });
+      tube(M, { r: .82, r2: .74, h: .3, y: .76, color: c, seg: 20 });               // pulsador
+      ball(M, { y: .9, ax: .74, ay: .3, az: .74, color: shade(c, 1.06), seg: 18 });
       return pack(M);
     },
   },
@@ -219,29 +243,34 @@ export const CATALOG = {
     name: 'Caja de pilas', emoji: '🔋', cat: 'luces', color: '#e9e2d4', power: true,
     build: o => {
       const M = mesh(), c = o.color;
-      const W = 5.2, D = 3.6, H = 1.6, t = .2;
+      const W = 4.6, D = 3.1, H = 1.4, t = .18;
       box(M, { w: W, h: t, d: D, y: t / 2, color: c });                       // fondo
       for (const s of [-1, 1]) {
         box(M, { w: W, h: H, d: t, y: H / 2, z: s * (D / 2 - t / 2), color: c });
         box(M, { w: t, h: H, d: D, x: s * (W / 2 - t / 2), y: H / 2, color: c });
       }
       for (let i = 0; i < 4; i++) {                                          // cuatro pilas
-        const x = -1.5 + i;
-        tube(M, { r: .42, h: 2.8, x, y: .68, rx: Math.PI / 2, color: '#4a4438', mix: 0, seg: 10 });
-        tube(M, { r: .44, h: .5, x, y: .68, z: -.9, rx: Math.PI / 2, color: '#c9a24a', mix: 0, seg: 10 });
-        tube(M, { r: .17, h: .28, x, y: .68, z: 1.52, rx: Math.PI / 2, color: '#c9a24a', mix: 0, seg: 8 });
+        const x = -1.32 + i * .88;
+        tube(M, { r: .34, h: 2.4, x, y: .55, rx: Math.PI / 2, color: '#4a4438', mix: 0, seg: 10 });
+        tube(M, { r: .36, h: .38, x, y: .55, z: -.75, rx: Math.PI / 2, color: '#c9a24a', mix: 0, seg: 10 });
+        tube(M, { r: .13, h: .22, x, y: .55, z: 1.3, rx: Math.PI / 2, color: '#c9a24a', mix: 0, seg: 8 });
       }
-      box(M, { w: W - t * 2, h: .16, d: .5, y: H - .05, z: 0, color: shade(c, .88) });   // pletina
-      ball(M, { x: W / 2 - .5, y: H - .1, z: D / 2 - .35, r: .2, color: '#ffffff', mix: 0, emi: 1, seg: 8 });
+      // botón integrado en el frente
+      tube(M, { r: .44, h: .26, y: .78, z: D / 2 + .06, rx: Math.PI / 2, color: shade(c, .84), seg: 16 });
+      ball(M, { y: .78, z: D / 2 + .22, ax: .3, ay: .3, az: .12, color: shade(c, 1.05), seg: 12 });
+      ball(M, { x: W / 2 - .55, y: .78, z: D / 2 + .12, r: .17, color: '#ffffff', mix: 0, emi: 1, seg: 10 });
       return pack(M);
     },
   },
 
   // ---------------------------------------------------------------- herramientas
   tira: {
-    name: 'Tira de luces', emoji: '💡', cat: 'luces', color: '#fff3d6', tool: 'tira',
+    name: 'Tira de luces', emoji: '💡', cat: 'luces', color: '#3a2a20', tool: 'tira',
     props: [
-      { k: 'thick', label: 'Grosor', hint: 'del cable y las luces', min: .2, max: 1.6, step: .1, def: .5 },
+      { k: 'thick', label: 'Grosor', hint: 'del cable', min: .15, max: 1.2, step: .05, def: .3 },
+      { k: 'bulb', label: 'Foquitos', hint: 'tamaño de cada luz', min: .12, max: .8, step: .04, def: .3 },
+      { k: 'gap', label: 'Separación', hint: 'entre foquitos', min: .6, max: 6, step: .2, def: 1.4 },
+      { k: 'bright', label: 'Brillo', hint: 'de esta tira', min: .3, max: 2, step: .1, def: 1, unit: '×' },
     ],
   },
   __foto: { name: 'Foto', emoji: '🖼️', cat: 'fotos', tool: 'foto' },

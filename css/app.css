@@ -41,9 +41,13 @@ button{font:inherit;color:inherit;border:0;background:none}
 #scene.ready{opacity:1;transform:none}
 #scene{transition:opacity .8s var(--ease),transform 1.1s var(--spring)}
 
+/* el resplandor de fondo se tiñe con las luces encendidas de la caja */
 .glow{position:fixed;left:50%;top:58%;width:78vmax;height:78vmax;z-index:0;pointer-events:none;
+  --lit:0;--lit-rgb:255,190,110;
   transform:translate(-50%,-50%);border-radius:50%;
-  background:radial-gradient(circle,rgba(214,168,108,.22),transparent 62%);
+  background:
+    radial-gradient(circle,rgba(var(--lit-rgb),calc(var(--lit) * .30)),transparent 55%),
+    radial-gradient(circle,rgba(214,168,108,.22),transparent 62%);
   animation:drift 22s ease-in-out infinite alternate}
 @keyframes drift{from{transform:translate(-52%,-52%) scale(1)}to{transform:translate(-48%,-46%) scale(1.1)}}
 
@@ -324,6 +328,14 @@ body.booted .splash{opacity:0;transform:scale(1.06);pointer-events:none}
 .sheet h3{font-size:12.5px;font-weight:800;color:var(--brown);opacity:.65;margin:20px 0 10px;text-transform:uppercase;letter-spacing:.6px}
 
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:4px}
+.tile.soft{min-height:62px;gap:3px;background:rgba(201,155,98,.13)}
+.tile.soft b{font:800 14px/1 inherit;color:var(--brown-d)}
+.tile.soft span{font:600 11px/1 inherit;color:var(--brown);opacity:.65}
+.chips.mini{margin:0;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.chips.mini .chip{padding:8px 11px;font-size:12px}
+.dim.col{flex-direction:column;align-items:stretch;gap:8px}
+.dim.col .chips.mini{justify-content:flex-start}
 .tile{position:relative;overflow:hidden;border-radius:20px;background:rgba(201,155,98,.14);color:var(--brown-d);min-height:76px;
   padding:12px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
   font:800 11px/1 inherit;transition:transform .16s var(--ease),background .2s}
@@ -433,6 +445,31 @@ body.preview .hint,body.preview .surface,body.preview .ov{display:none}
 .vignette{transition:background .8s var(--ease)}
 body.preview .vignette{background:radial-gradient(72% 58% at 50% 45%,transparent 42%,rgba(88,60,34,.26) 100%)}
 
+/* ---------- afinando un valor: la interfaz se aparta y deja ver la caja ---------- */
+/* Todo se atenúa menos la fila que el dedo está tocando. */
+.sheet,.dock,.topbar,.scrim,.surface,.lock,.zbar,.drawbar{
+  transition:opacity .3s var(--ease),transform .34s var(--ease),background .3s var(--ease)}
+/* el cristal desaparece: la caja se ve nítida detrás del control que estás tocando */
+body.tuning .sheet{background:none;box-shadow:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none;border-top-color:transparent}
+/* la animación de entrada fija la opacidad: hay que soltarla para poder atenuar */
+body.tuning .sheet.on > *{animation:none}
+body.tuning .sheet h2,body.tuning .sheet h3,body.tuning .sheet .grab,
+body.tuning .sheet .swatches,body.tuning .sheet .chips,body.tuning .sheet .lib,
+body.tuning .sheet .grid2,body.tuning .sheet .grid3,body.tuning .sheet .grid4,
+body.tuning .sheet .tip,body.tuning .sheet .opt,body.tuning .sheet .wide,
+body.tuning .sheet .dim:not(.tuning){opacity:.1}
+body.tuning .sheet #objTabs{background:none}
+body.tuning .dim.tuning{opacity:1;background:var(--glass-strong);border-radius:20px;
+  padding:10px 12px;box-shadow:var(--sh-2);border:1px solid var(--edge)}
+body.tuning .dim.tuning + .dim{border-top-color:transparent}
+body.tuning .scrim{opacity:0}
+body.tuning .topbar{opacity:.12;transform:translateY(-8px)}
+body.tuning .dock,body.tuning .surface,body.tuning .lock{opacity:.14}
+body.tuning .zbar{opacity:1}
+body.tuning .toast{opacity:0}
+
+/* ---------- adaptativo ---------- */
 @media (max-width:359px){
   .brand span{display:none}
   .dbtn span{font-size:10px}
@@ -444,5 +481,22 @@ body.preview .vignette{background:radial-gradient(72% 58% at 50% 45%,transparent
   body.preview .dock{transform:translateX(-50%) translateY(160%)}
   .sheet{left:50%;transform:translate(-50%,102%);width:min(520px,100vw)}
   .sheet.on{transform:translate(-50%,0)}
+}
+/* En pantallas grandes el panel vive a un lado: se ve la caja entera mientras editas */
+@media (min-width:900px){
+  .sheet{left:auto;right:18px;bottom:18px;top:auto;width:390px;max-height:min(78vh,760px);
+    border-radius:28px;transform:translateY(0) translateX(120%)}
+  .sheet.on{transform:none}
+  .scrim{background:rgba(58,38,22,.10)}
+  body.tuning .sheet{transform:translateX(6%)}
+  .sheet h2{font-size:20px}
+  .lib{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
+  .kbd-tip{display:block}
+}
+.kbd-tip{display:none}
+@media (hover:hover) and (pointer:fine){
+  .lib-item:hover,.chip:hover,.tile:hover,.sw:hover{filter:brightness(1.05)}
+  .dbtn:hover,.ibtn:hover{background:var(--accent-soft)}
+  .kbd-tip{display:block}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}

@@ -2,7 +2,7 @@
 import { LIMITS, DESIGNS } from '../box/model.js';
 import { MATERIALS, FINISHES } from '../box/materials.js';
 import { CATEGORIES, CATALOG_LIST, CATALOG, PALETTE, LIGHT_PALETTE, propsOf } from '../objects/catalog.js';
-import { MODES, MODE_NAME, ROT_MODES, isStrip, isSource, isPower, meanScale } from './objects.js';
+import { MODES, MODE_NAME, ROT_MODES, POSES, isStrip, isSource, isPower, meanScale } from './objects.js';
 import { state, canUndo, canRedo } from './store.js';
 import { audio } from '../features/audio.js';
 import { bump } from '../features/fx.js';
@@ -92,15 +92,15 @@ export function createUI(app) {
     const val = row.querySelector('.st-val'), num = val.querySelector('b');
     const put = v => o.set(Math.max(o.min, Math.min(o.max, +v.toFixed(2))));
     const bump2 = d => { put(o.get() + d * o.step); refresh(); audio.play('tick'); };
-    hold(minus, () => bump2(-1));
-    hold(plus, () => bump2(1));
+    hold(minus, () => bump2(-1), row);
+    hold(plus, () => bump2(1), row);
     scrub(val, dx => {
       const q = Math.round(dx / 9);
       if (!q) return false;
       put(o.get() + q * o.step); refresh();
       audio.play('tick');
       return true;
-    });
+    }, row);
     function refresh() {
       const v = o.get();
       const txt = o.step < 1 ? v.toFixed(o.step < .1 ? 2 : 1) : String(Math.round(v));
@@ -113,25 +113,34 @@ export function createUI(app) {
     return refresh;
   }
 
-  /** Pulsación con repetición (mantener pulsado). */
-  function hold(node, fn) {
+  /**
+   * Pulsación con repetición (mantener pulsado). Mientras dura, la interfaz se
+   * aparta para dejar ver la caja y `mark` señala la fila que se está tocando.
+   */
+  function hold(node, fn, mark) {
     let t1 = 0, t2 = 0, on = false;
-    const stop = () => { if (!on) return; on = false; clearTimeout(t1); clearInterval(t2); app.commit(); };
+    const stop = () => {
+      if (!on) return;
+      on = false; clearTimeout(t1); clearInterval(t2);
+      mark?.classList.remove('tuning'); app.tuning(false); app.commit();
+    };
     node.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation();
       on = true; fn();
+      mark?.classList.add('tuning'); app.tuning(true);
       t1 = setTimeout(() => { t2 = setInterval(fn, 85); }, 420);
     });
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) node.addEventListener(ev, stop);
   }
 
   /** Arrastre horizontal sobre un elemento para cambiar un valor. */
-  function scrub(node, fn) {
+  function scrub(node, fn, mark) {
     let id = null, x0 = 0;
     node.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation();
       id = e.pointerId; x0 = e.clientX;
       node.setPointerCapture(id); node.classList.add('hot');
+      mark?.classList.add('tuning'); app.tuning(true);
     });
     node.addEventListener('pointermove', e => {
       if (id !== e.pointerId) return;
@@ -139,10 +148,31 @@ export function createUI(app) {
     });
     const end = e => {
       if (id !== e.pointerId) return;
-      id = null; node.classList.remove('hot'); app.commit();
+      id = null; node.classList.remove('hot');
+      mark?.classList.remove('tuning'); app.tuning(false); app.commit();
     };
     node.addEventListener('pointerup', end);
     node.addEventListener('pointercancel', end);
+  }
+
+  /** Fila de opciones (recorte del papel, variedad de color…). */
+  function chipRow(parent, o) {
+    const row = document.createElement('div');
+    row.className = 'dim col';
+    row.innerHTML = `<div class="dim-info"><b>${o.label}</b><small>${o.hint || ''}</small></div>
+      <div class="chips mini"></div>`;
+    const box = row.querySelector('.chips');
+    const refresh = () => box.querySelectorAll('.chip')
+      .forEach(b => b.classList.toggle('on', b.dataset.v === String(o.get())));
+    o.choices.forEach(ch => {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = ch.name; b.dataset.v = String(ch.v);
+      b.onclick = () => { o.set(ch.v); refresh(); app.commit(); app.peek(700); };
+      box.appendChild(b);
+    });
+    parent.appendChild(row);
+    refresh();
+    return refresh;
   }
 
   // ---------------------------------------------------------------- medidas
@@ -198,7 +228,7 @@ export function createUI(app) {
   MATERIALS.forEach(m => {
     const b = document.createElement('button');
     b.className = 'sw'; b.style.background = m.color; b.title = m.name; b.dataset.mat = m.id; b.dataset.mute = '1';
-    b.onclick = () => { app.setMaterial(m.id); syncMat(); };
+    b.onclick = () => { app.setMaterial(m.id); app.peek(900); syncMat(); };
     mat.appendChild(b);
   });
   const syncMat = () => document.querySelectorAll('#materials .sw').forEach(b => b.classList.toggle('on', b.dataset.mat === state.material));
@@ -233,21 +263,28 @@ export function createUI(app) {
   repeat.onchange = () => { state.repeat = repeat.checked; audio.play('toggle'); };
 
   // ------------------------------------------------- panel del objeto
-  const objColors = $('#objColors'), objParams = $('#objParams');
+  const objColors = $('#objColors'), objParams = $('#objParams'), objExtra = $('#objExtra');
   const objPos = $('#objPos'), objRot = $('#objRot'), objScl = $('#objScl');
   const lightColors = $('#lightColors'), lightParams = $('#lightParams');
 
   PALETTE.forEach(hex => {
     const b = document.createElement('button');
     b.className = 'sw'; b.style.background = hex; b.dataset.col = hex; b.dataset.mute = '1';
-    b.onclick = () => { app.objColor(hex); syncObj(); };
+    b.onclick = () => { app.objColor(hex); app.peek(800); syncObj(); };
     objColors.appendChild(b);
   });
   LIGHT_PALETTE.forEach(hex => {
     const b = document.createElement('button');
     b.className = 'sw'; b.style.background = hex; b.dataset.hue = hex; b.dataset.mute = '1';
-    b.onclick = () => { app.setLight('hue', hex); app.commit(); syncObj(); };
+    b.onclick = () => { app.setLight('hue', hex); app.commit(); app.peek(900); syncObj(); };
     lightColors.appendChild(b);
+  });
+  const posesRow = $('#posesRow');
+  POSES.forEach(p => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.innerHTML = `<span class="em">${p.emoji}</span>${p.name}`;
+    b.onclick = () => { app.setPose(p.id); app.peek(900); syncObj(); };
+    posesRow.appendChild(b);
   });
   const modeChips = $('#modeChips');
   MODES.forEach(m => {
@@ -283,10 +320,24 @@ export function createUI(app) {
   let paramRefresh = [];
   /** Todos los controles del objeto se generan a partir de su descripción. */
   function buildObjSheet(o) {
-    for (const c of [objParams, objPos, objRot, objScl, lightParams]) c.innerHTML = '';
+    for (const c of [objParams, objPos, objRot, objScl, lightParams, objExtra]) c.innerHTML = '';
     paramRefresh = [];
     if (!o) return;
     const add = (parent, c) => paramRefresh.push(stepRow(parent, c));
+
+    // atajos de relleno del papel picado
+    if (o.type === 'papel') {
+      const box = document.createElement('div');
+      box.className = 'grid3';
+      for (const [id, name, hint] of [['poco', 'Poco', 'sutil'], ['medio', 'Medio', 'decorado'], ['mucho', 'Mucho', 'rellenito']]) {
+        const b = document.createElement('button');
+        b.className = 'tile soft';
+        b.innerHTML = `<b>${name}</b><span>${hint}</span>`;
+        b.onclick = () => { app.fillBox(id); paramRefresh.forEach(f => f()); app.peek(1100); };
+        box.appendChild(b);
+      }
+      objExtra.appendChild(box);
+    }
 
     // --- posición ---
     add(objPos, { label: 'Izq. · der.', hint: 'eje X', min: -40, max: 40, step: .5,
@@ -311,9 +362,10 @@ export function createUI(app) {
         get: () => o.scl[k], set: v => app.objSet('scl.' + k, v) });
     }
 
-    // --- controles propios del tipo ---
+    // --- controles propios del tipo (numéricos o de opciones) ---
     for (const p of propsOf(o.type)) {
-      add(objParams, { ...p, get: () => o[p.k] ?? p.def, set: v => app.objSet(p.k, v) });
+      const c = { ...p, get: () => o[p.k] ?? p.def, set: v => app.objSet(p.k, v) };
+      paramRefresh.push(p.choices ? chipRow(objParams, c) : stepRow(objParams, c));
     }
 
     // --- luz a medida ---
@@ -348,6 +400,7 @@ export function createUI(app) {
     el.zbar.hidden = !on || isStrip(o);
     if (!on) return;
     $('#objTitle').textContent = nameOf(o);
+    $('#colorTitle').textContent = isStrip(o) ? 'Color del cable' : 'Color';
     $('#obLock').classList.toggle('on', !!o.locked);
     $('#objLock2').classList.toggle('on', !!o.locked);
     objColors.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.col === o.color));
@@ -407,9 +460,10 @@ export function createUI(app) {
     zTrack.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation();
       id = e.pointerId; zTrack.setPointerCapture(id); move(e); audio.play('grab');
+      app.tuning(true);
     });
     zTrack.addEventListener('pointermove', e => { if (id === e.pointerId) move(e); });
-    const end = e => { if (id === e.pointerId) { id = null; app.commit(); } };
+    const end = e => { if (id === e.pointerId) { id = null; app.tuning(false); app.commit(); } };
     zTrack.addEventListener('pointerup', end);
     zTrack.addEventListener('pointercancel', end);
   }
@@ -419,13 +473,13 @@ export function createUI(app) {
   ['#ffffff', ...PALETTE.slice(1)].forEach(hex => {
     const b = document.createElement('button');
     b.className = 'sw'; b.style.background = hex; b.dataset.lin = hex; b.dataset.mute = '1';
-    b.onclick = () => { app.setLining({ color: hex }); syncForro(); };
+    b.onclick = () => { app.setLining({ color: hex }); app.peek(900); syncForro(); };
     forroColors.appendChild(b);
   });
   FINISHES.forEach(f => {
     const b = document.createElement('button');
     b.className = 'chip'; b.dataset.fin = f.id; b.textContent = f.name;
-    b.onclick = () => { app.setLining({ finish: f.id }); syncForro(); };
+    b.onclick = () => { app.setLining({ finish: f.id }); app.peek(900); syncForro(); };
     forroFinish.appendChild(b);
   });
   document.querySelectorAll('[data-scope]').forEach(b => {
@@ -585,6 +639,40 @@ export function createUI(app) {
     el.exit.hidden = !on;
     if (on) open(null);
   }
+
+  // ------------------------------------------------- teclado (escritorio)
+  // En móvil nunca estorban; en PC dan la precisión que pide el ratón.
+  const NUDGE = { ArrowLeft: ['x', -1], ArrowRight: ['x', 1], ArrowUp: ['z', -1], ArrowDown: ['z', 1] };
+  addEventListener('keydown', e => {
+    if (e.target.matches('input,textarea')) return;
+    const o = app.selectedObject();
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); return e.shiftKey ? app.redo() : app.undo(); }
+    if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); return app.redo(); }
+    if (e.key === 'Escape') { open(null); app.select(null); app.selectObject(null); return; }
+    if (!o) return;
+    const step = e.shiftKey ? 5 : 1;
+    if (NUDGE[e.key]) {
+      const [k, d] = NUDGE[e.key];
+      e.preventDefault();
+      app.objSet(k, o[k] + d * step * .5); app.commit(); syncObj();
+      return;
+    }
+    const k = e.key.toLowerCase();
+    if (k === 'q' || k === 'e') { app.objSet('rot.y', o.rot.y + (k === 'q' ? -1 : 1) * step * Math.PI / 24); app.commit(); syncObj(); }
+    else if (k === 'w' || k === 's') { app.objSet('y', o.y + (k === 'w' ? 1 : -1) * step * .5); app.commit(); syncObj(); }
+    else if (k === 'd') { app.duplicateObject(); }
+    else if (k === 'l') { app.lockObject(); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); app.removeObject(); }
+  });
+
+  // ------------------------------------------------- aviso de sonidos propios
+  setTimeout(() => {
+    const packs = audio.packs;
+    $('#soundInfo').textContent = packs.length
+      ? `Sonidos propios activos en: ${packs.join(', ')}.`
+      : 'Añade tus propios sonidos dejando archivos .wav o .mp3 en la carpeta sounds/.';
+  }, 1500);
 
   syncDims(); syncMat(); syncDesign(); sync();
   return { sync, syncDims, syncMat, toast, loading, preview, open, placing, bar };

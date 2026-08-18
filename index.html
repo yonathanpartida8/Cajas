@@ -126,8 +126,9 @@
   </div>
 
   <div data-panel="basico">
-    <h3>Color</h3>
+    <h3 id="colorTitle">Color</h3>
     <div class="swatches wrap" id="objColors"></div>
+    <div id="objExtra"></div>
     <div id="objParams"></div>
     <div class="grid2">
       <button class="wide soft" id="objCenter"><i class="ic ic-center"></i>Centrar</button>
@@ -145,10 +146,13 @@
   </div>
 
   <div data-panel="girar" hidden>
+    <h3>Poses rápidas</h3>
+    <div class="chips wrap" id="posesRow"></div>
     <h3>Modo de giro</h3>
     <div class="chips" id="rotModes"></div>
     <p class="tip left" id="rotHint"></p>
     <div id="objRot"></div>
+    <p class="tip left">Con dos dedos sobre el objeto: gíralos para rotarlo y súbelos o bájalos para inclinarlo.</p>
     <button class="wide soft" data-reset="rot"><i class="ic ic-undo"></i>Restablecer giro</button>
   </div>
 
@@ -232,7 +236,7 @@
   <label class="opt"><span><i class="ic ic-sound"></i>Sonido</span><input type="checkbox" data-mute id="optSound" checked></label>
   <label class="opt"><span><i class="ic ic-buzz"></i>Vibración</span><input type="checkbox" data-mute id="optBuzz" checked></label>
   <button class="wide danger" data-mute id="btnReset"><i class="ic ic-trash"></i>Reiniciar diseño</button>
-  <p class="tip">Toca una superficie para elegirla · toca una imagen para editarla.</p>
+  <p class="tip" id="soundInfo">Toca una superficie para elegirla · toca una imagen para editarla.</p>
 </section>
 
 <button class="exit-preview" id="exitPreview" hidden><i class="ic ic-close"></i>Salir</button>

@@ -178,6 +178,72 @@ export function ribbon(M, o) {
   return M;
 }
 
+/**
+ * Papelito picado: una lámina finísima, ligeramente curvada y retorcida.
+ * `shape` cambia el recorte modulando el ancho a lo largo de la tira.
+ */
+const CUTS = {
+  tira: () => 1,                                             // tira larga y recta
+  punta: f => 1 - f * .88,                                   // acaba en punta
+  rombo: f => 1 - Math.abs(2 * f - 1) * .8,                  // ancho por el centro
+  hoja: f => Math.pow(Math.sin(Math.min(.999, Math.max(.001, f)) * Math.PI), .55),
+  rect: f => (f < .06 || f > .94 ? .96 : 1),                 // recorte recto
+};
+export const CUT_NAMES = Object.keys(CUTS);
+
+export function paper(M, o) {
+  const { w = .7, h = 4, d = .02, bend = .28, twist = .8, shape = 'tira', seg = 5,
+    color = '#ffffff', mix = 1, emi = 0 } = o;
+  const t = xform(o), c = C(color);
+  const cut = CUTS[shape] || CUTS.tira;
+  const pt = (i, s, front) => {
+    const f = i / seg;
+    const a = twist * (f - .5);
+    const half = w * .5 * cut(f);
+    const sag = Math.sin(f * Math.PI) * bend * h * .5;
+    return [half * s * Math.cos(a), (f - .5) * h, half * s * Math.sin(a) + sag + (front ? d : -d)];
+  };
+  for (let i = 0; i < seg; i++) {
+    const ang = twist * (i / seg - .5);
+    for (const front of [true, false]) {
+      const nz = front ? 1 : -1;
+      const a = pt(i, -1, front), b = pt(i, 1, front), e = pt(i + 1, 1, front), g = pt(i + 1, -1, front);
+      const nn = [-Math.sin(ang) * nz, .18 * nz, Math.cos(ang) * nz];
+      if (front) quad(M, t, a, b, e, g, nn, c, mix, emi);
+      else quad(M, t, g, e, b, a, nn, c, mix, emi);
+    }
+  }
+  return M;
+}
+
+/**
+ * Suaviza una polilínea con un spline de Catmull-Rom y la remuestrea a pasos
+ * regulares: el trazo del dedo se convierte en una curva limpia.
+ */
+export function smoothPath(pts, step = .8) {
+  if (pts.length < 3) return pts.map(p => [...p]);
+  const P = i => pts[Math.max(0, Math.min(pts.length - 1, i))];
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+    const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]);
+    const n = Math.max(1, Math.round(len / step));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      const q = [];
+      for (let a = 0; a < 3; a++) {
+        q.push(.5 * ((2 * p1[a])
+          + (-p0[a] + p2[a]) * t
+          + (2 * p0[a] - 5 * p1[a] + 4 * p2[a] - p3[a]) * t2
+          + (-p0[a] + 3 * p1[a] - 3 * p2[a] + p3[a]) * t3));
+      }
+      out.push(q);
+    }
+  }
+  out.push([...pts[pts.length - 1]]);
+  return out;
+}
+
 /** Tubo que sigue una polilínea: el cable de las tiras de luces. */
 export function polyTube(M, o) {
   const { points, r = .12, sides = 6, color = '#3d3a34', mix = 0, emi = 0 } = o;
