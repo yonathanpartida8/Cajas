@@ -7,6 +7,7 @@
 //   toque corto → seleccionar imagen o superficie
 import { clamp } from '../core/math3d.js';
 import { S } from '../box/model.js';
+import { audio } from '../features/audio.js';
 
 const TAP = 10;          // px de tolerancia para considerar "toque"
 const EDGE = .02;        // margen para aceptar un cambio de superficie
@@ -32,6 +33,7 @@ export function createInput(canvas, api) {
 
   // ---------------------------------------------------------------- inicio
   function down(e) {
+    audio.unlock();
     canvas.setPointerCapture(e.pointerId);
     pts.set(e.pointerId, pos(e));
 
@@ -47,12 +49,13 @@ export function createInput(canvas, api) {
     const s = hit && api.scene.pickSticker(hit.face, hit.u, hit.v);
     if (s && !s.ghost) {
       api.select(s.id);
+      audio.play('grab');
       mode = 'sticker';
       start.grab = { id: s.id, du: hit.u - s.u, dv: hit.v - s.v };
       api.hover(hit.face.id);
       return;
     }
-    if (hit && api.state.lidPicked && hit.face.part === 'lid') { mode = 'lid'; return; }
+    if (hit && api.state.lidPicked && hit.face.part === 'lid') { audio.play('grab'); mode = 'lid'; return; }
     mode = 'orbit';
   }
 
@@ -65,6 +68,7 @@ export function createInput(canvas, api) {
     });
     gesture = { d: spread(), a: twist(), c: centroid(), size: sel?.size, rot: sel?.rot };
     mode = both ? 'pinch-img' : 'view';
+    audio.play('grab');
   }
 
   // ---------------------------------------------------------------- arrastre

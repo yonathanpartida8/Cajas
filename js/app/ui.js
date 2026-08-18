@@ -2,6 +2,8 @@
 import { LIMITS } from '../box/model.js';
 import { MATERIALS } from '../box/materials.js';
 import { state, canUndo, canRedo } from './store.js';
+import { audio } from '../features/audio.js';
+import { bump } from '../features/fx.js';
 
 const $ = s => document.querySelector(s);
 const PRESETS = {
@@ -27,6 +29,13 @@ export function createUI(app) {
   };
   let sheet = null, toastT = 0;
 
+  // toque base en cualquier control (los gestos con voz propia lo silencian)
+  addEventListener('pointerdown', e => {
+    audio.unlock();
+    const b = e.target.closest?.('button,.st-val,input[type=checkbox]');
+    if (b && !b.dataset.mute) audio.play(b.dataset.sfx || 'tap');
+  }, { capture: true, passive: true });
+
   // ---------------------------------------------------------------- hojas
   function open(name) {
     if (sheet) {
@@ -36,6 +45,7 @@ export function createUI(app) {
     if (!name || (sheet && sheet.id === 'sheet-' + name)) { sheet = null; el.scrim.classList.remove('on'); return; }
     sheet = $('#sheet-' + name);
     sheet.hidden = false;
+    audio.play('panel');
     requestAnimationFrame(() => sheet.classList.add('on'));
     el.scrim.classList.add('on');
   }
@@ -65,7 +75,7 @@ export function createUI(app) {
   const rows = {};
   const box = $('#dims');
   for (const [key, label, hint] of DIMS) {
-    const [min, max, , step] = LIMITS[key];
+    const [min, max, , stepSize] = LIMITS[key];
     const row = document.createElement('div');
     row.className = 'dim';
     row.innerHTML = `
@@ -78,14 +88,14 @@ export function createUI(app) {
     const [minus, plus] = row.querySelectorAll('.st-btn');
     const val = row.querySelector('.st-val');
     const num = val.querySelector('b');
-    const bump = d => app.setDim(key, +(state.dims[key] + d * step).toFixed(2));
-    hold(minus, () => { bump(-1); sync(); });
-    hold(plus, () => { bump(1); sync(); });
+    const step = d => app.setDim(key, +(state.dims[key] + d * stepSize).toFixed(2));
+    hold(minus, () => { step(-1); sync(); audio.play('tick'); });
+    hold(plus, () => { step(1); sync(); audio.play('tick'); });
     scrub(val, dx => {                                        // deslizar sobre el número
       const q = Math.round(dx / 9);
       if (!q) return false;
-      app.setDim(key, +(state.dims[key] + q * step).toFixed(2));
-      sync();
+      app.setDim(key, +(state.dims[key] + q * stepSize).toFixed(2));
+      sync(); audio.play('tick');
       return true;
     });
     rows[key] = { num, minus, plus, min, max };
@@ -98,7 +108,8 @@ export function createUI(app) {
   function syncDims() {
     for (const [key] of DIMS) {
       const r = rows[key], v = state.dims[key];
-      r.num.textContent = LIMITS[key][3] < 1 ? v.toFixed(1) : Math.round(v);
+      const txt = LIMITS[key][3] < 1 ? v.toFixed(1) : String(Math.round(v));
+      if (r.num.textContent !== txt) { r.num.textContent = txt; bump(r.num); }
       r.minus.disabled = v <= r.min + 1e-6;
       r.plus.disabled = v >= r.max - 1e-6;
     }
@@ -144,7 +155,7 @@ export function createUI(app) {
   const mat = $('#materials');
   MATERIALS.forEach(m => {
     const b = document.createElement('button');
-    b.className = 'sw'; b.style.background = m.color; b.title = m.name; b.dataset.mat = m.id;
+    b.className = 'sw'; b.style.background = m.color; b.title = m.name; b.dataset.mat = m.id; b.dataset.mute = '1';
     b.onclick = () => { app.setMaterial(m.id); syncMat(); };
     mat.appendChild(b);
   });
@@ -178,9 +189,10 @@ export function createUI(app) {
   el.surfaceMove.onclick = () => app.toggleLidMove();
   el.lock.onclick = () => { state.lockAspect = !state.lockAspect; sync(); };
 
-  for (const [id, key] of [['#optSpin', 'spin'], ['#optShadow', 'shadow'], ['#optHQ', 'hq']]) {
+  for (const [id, key] of [['#optSpin', 'spin'], ['#optShadow', 'shadow'], ['#optHQ', 'hq'],
+    ['#optSound', 'sound'], ['#optBuzz', 'buzz']]) {
     const c = $(id); c.checked = state[key];
-    c.onchange = () => app.setOption(key, c.checked);
+    c.onchange = () => { app.setOption(key, c.checked); audio.play('toggle'); };
   }
 
   // ---------------------------------------------------------------- colocar imagen
@@ -237,7 +249,10 @@ export function createUI(app) {
     const label = app.surfaceLabel();
     el.surface.hidden = !label;
     if (label) {
-      el.surfaceName.textContent = label.name;
+      if (el.surfaceName.textContent !== label.name) {
+        el.surfaceName.textContent = label.name;
+        bump(el.surface, 'pulse');
+      }
       el.surfaceMove.hidden = !label.lid;
       el.surfaceMove.classList.toggle('on', state.lidPicked);
       el.surfaceClose.hidden = false;

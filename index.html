@@ -14,7 +14,15 @@
 </head>
 <body>
 
+<div class="splash" id="splash">
+  <div class="splash-mark"><i class="ic ic-brand"></i></div>
+  <b>Cajas</b><span>diseña en 3D</span>
+</div>
+
 <canvas id="scene"></canvas>
+<div class="glow" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div class="fx" id="fx" aria-hidden="true"></div>
 
 <!-- marco y manijas de la imagen seleccionada -->
 <div class="ov" id="ov" hidden>
@@ -26,10 +34,10 @@
 <header class="topbar" id="topbar">
   <div class="brand"><i class="ic ic-brand"></i><span>Cajas</span></div>
   <div class="row">
-    <button class="ibtn" id="btnUndo" aria-label="Deshacer" disabled><i class="ic ic-undo"></i></button>
-    <button class="ibtn" id="btnRedo" aria-label="Rehacer" disabled><i class="ic ic-redo"></i></button>
-    <button class="ibtn" id="btnHome" aria-label="Centrar vista"><i class="ic ic-target"></i></button>
-    <button class="ibtn" id="btnPreview" aria-label="Vista previa"><i class="ic ic-eye"></i></button>
+    <button class="ibtn" id="btnUndo" data-mute aria-label="Deshacer" disabled><i class="ic ic-undo"></i></button>
+    <button class="ibtn" id="btnRedo" data-mute aria-label="Rehacer" disabled><i class="ic ic-redo"></i></button>
+    <button class="ibtn" id="btnHome" data-mute aria-label="Centrar vista"><i class="ic ic-target"></i></button>
+    <button class="ibtn" id="btnPreview" data-mute aria-label="Vista previa"><i class="ic ic-eye"></i></button>
   </div>
 </header>
 
@@ -45,7 +53,7 @@
 <div class="drop" id="drop" hidden>
   <img id="dropImg" alt="">
   <div class="drop-txt"><b>Arrastra a la caja</b><span>o toca la superficie</span></div>
-  <button class="chip-btn icon-only" id="dropCancel" aria-label="Descartar imagen"><i class="ic ic-close"></i></button>
+  <button class="chip-btn icon-only" id="dropCancel" data-mute aria-label="Descartar imagen"><i class="ic ic-close"></i></button>
 </div>
 
 <!-- proporción bloqueada -->
@@ -59,11 +67,11 @@
 </nav>
 
 <nav class="dock dock-alt" id="dockSticker" hidden>
-  <button class="dbtn" id="stCut"><i class="ic ic-cut"></i><span>Fondo</span></button>
+  <button class="dbtn" data-mute id="stCut"><i class="ic ic-cut"></i><span>Fondo</span></button>
   <button class="dbtn" id="stFit"><i class="ic ic-fit"></i><span>Ajustar</span></button>
   <button class="dbtn" id="stCenter"><i class="ic ic-center"></i><span>Centrar</span></button>
   <button class="dbtn" id="stCopy"><i class="ic ic-copy"></i><span>Copiar</span></button>
-  <button class="dbtn danger" id="stDel"><i class="ic ic-trash"></i><span>Borrar</span></button>
+  <button class="dbtn danger" data-mute id="stDel"><i class="ic ic-trash"></i><span>Borrar</span></button>
   <button class="dbtn ok" id="stDone"><i class="ic ic-check"></i><span>Listo</span></button>
 </nav>
 
@@ -73,10 +81,10 @@
   <div class="grab"></div>
   <h2>Caja y tapa</h2>
   <div class="grid4">
-    <button class="tile" data-lid="open"><i class="ic ic-lid-open"></i><span>Abrir</span></button>
-    <button class="tile" data-lid="close"><i class="ic ic-lid-close"></i><span>Cerrar</span></button>
-    <button class="tile" data-lid="aside"><i class="ic ic-lid-aside"></i><span>Separar</span></button>
-    <button class="tile" data-lid="place"><i class="ic ic-lid-place"></i><span>Colocar</span></button>
+    <button class="tile" data-mute data-lid="open"><i class="ic ic-lid-open"></i><span>Abrir</span></button>
+    <button class="tile" data-mute data-lid="close"><i class="ic ic-lid-close"></i><span>Cerrar</span></button>
+    <button class="tile" data-mute data-lid="aside"><i class="ic ic-lid-aside"></i><span>Separar</span></button>
+    <button class="tile" data-mute data-lid="place"><i class="ic ic-lid-place"></i><span>Colocar</span></button>
   </div>
   <h3>Material</h3>
   <div class="swatches" id="materials"></div>
@@ -97,10 +105,12 @@
 <section class="sheet" id="sheet-settings" hidden>
   <div class="grab"></div>
   <h2>Ajustes</h2>
-  <label class="opt"><span><i class="ic ic-rotate"></i>Giro automático</span><input type="checkbox" id="optSpin"></label>
-  <label class="opt"><span><i class="ic ic-shadow"></i>Sombra</span><input type="checkbox" id="optShadow" checked></label>
-  <label class="opt"><span><i class="ic ic-hd"></i>Alta calidad</span><input type="checkbox" id="optHQ" checked></label>
-  <button class="wide danger" id="btnReset"><i class="ic ic-trash"></i>Reiniciar diseño</button>
+  <label class="opt"><span><i class="ic ic-rotate"></i>Giro automático</span><input type="checkbox" data-mute id="optSpin"></label>
+  <label class="opt"><span><i class="ic ic-shadow"></i>Sombra</span><input type="checkbox" data-mute id="optShadow" checked></label>
+  <label class="opt"><span><i class="ic ic-hd"></i>Alta calidad</span><input type="checkbox" data-mute id="optHQ" checked></label>
+  <label class="opt"><span><i class="ic ic-sound"></i>Sonido</span><input type="checkbox" data-mute id="optSound" checked></label>
+  <label class="opt"><span><i class="ic ic-buzz"></i>Vibración</span><input type="checkbox" data-mute id="optBuzz" checked></label>
+  <button class="wide danger" data-mute id="btnReset"><i class="ic ic-trash"></i>Reiniciar diseño</button>
   <p class="tip">Toca una superficie para elegirla · toca una imagen para editarla.</p>
 </section>
 

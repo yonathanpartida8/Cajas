@@ -12,18 +12,41 @@ precision mediump float;
 in vec3 vN; in vec2 vUv; in vec3 vP;
 uniform sampler2D uTex;
 uniform vec2 uUvScale;
-uniform vec3 uTint;
+uniform vec3 uTint, uEye;
 uniform float uShade, uHi, uUnlit, uAlpha;
 out vec4 outColor;
+
+const vec3 KEY = vec3(.40, .84, .48);      // luz principal, cálida
+const vec3 FILL = vec3(-.62, .28, -.45);   // relleno frío
+
 void main(){
   vec4 t = texture(uTex, vUv*uUvScale);
   if(uUnlit > .5){ outColor = vec4(t.rgb, t.a*uAlpha); return; }
+
   vec3 n = normalize(vN);
-  float key = max(dot(n, normalize(vec3(.42,.86,.5))), 0.0);
-  float fill = max(dot(n, normalize(vec3(-.6,.25,-.4))), 0.0);
-  float l = .46 + .52*key + .16*fill;
-  vec3 c = t.rgb * uTint * l * uShade;
-  c = mix(c, vec3(1.0,.87,.66), uHi*.28);
+  vec3 v = normalize(uEye - vP);
+  vec3 l = normalize(KEY);
+
+  float key = max(dot(n, l), 0.0);
+  float fill = max(dot(n, normalize(FILL)), 0.0);
+
+  // ambiente por altura: rebote cálido del suelo abajo, luz de cielo arriba
+  float h = clamp(vP.y * 1.7 + .18, 0.0, 1.0);
+  vec3 amb = mix(vec3(.40,.34,.28), vec3(.66,.65,.64), h);
+
+  vec3 base = t.rgb * uTint;
+  vec3 c = base * (amb + vec3(1.0,.95,.86)*key*.62 + vec3(.46,.52,.60)*fill*.20);
+
+  // brillo tenue del cartón satinado
+  float spec = pow(max(dot(n, normalize(l + v)), 0.0), 24.0) * .09;
+  c += spec * (.4 + .6*key);
+
+  // los ángulos rasantes se oscurecen un poco: da volumen a las aristas
+  float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+  c *= mix(1.0, .84, fres * .75);
+
+  c *= uShade;
+  c = mix(c, vec3(1.0,.88,.68), uHi*.3);
   outColor = vec4(c, t.a*uAlpha);
 }`;
 
@@ -46,7 +69,7 @@ export function createRenderer(canvas) {
   gl.useProgram(prog);
 
   const U = {};
-  for (const n of ['uVP', 'uTex', 'uUvScale', 'uTint', 'uShade', 'uHi', 'uUnlit', 'uAlpha'])
+  for (const n of ['uVP', 'uTex', 'uUvScale', 'uTint', 'uEye', 'uShade', 'uHi', 'uUnlit', 'uAlpha'])
     U[n] = gl.getUniformLocation(prog, n);
   gl.uniform1i(U.uTex, 0);
 
@@ -135,6 +158,7 @@ export function createRenderer(canvas) {
   function render(faces, cam) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.uniformMatrix4fv(U.uVP, false, cam.vp);
+    gl.uniform3f(U.uEye, cam.eye.x, cam.eye.y, cam.eye.z);
 
     let n = 0;
     for (const f of faces) {

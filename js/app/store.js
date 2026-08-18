@@ -31,7 +31,7 @@ export const state = {
   placing: null,               // {id} imagen pendiente de colocar
   lidPicked: false,            // tapa lista para moverse con el dedo
   lockAspect: true,
-  spin: false, shadow: true, hq: true,
+  spin: false, shadow: true, hq: true, sound: true, buzz: true,
 };
 
 export const newSticker = o => ({ id: 's' + (++stSeq), u: .5, v: .5, size: .5, ratio: 1, rot: 0, ...o });

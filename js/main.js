@@ -5,6 +5,8 @@ import { createUI } from './app/ui.js';
 import { createInput } from './app/input.js';
 import { createOverlay } from './app/overlay.js';
 import { removeBackground } from './features/removebg.js';
+import { audio } from './features/audio.js';
+import * as fx from './features/fx.js';
 import { extent, faceLabel, faceShort, lidHalf, S, LIMITS } from './box/model.js';
 import { clamp, damp, v3, rayPlane } from './core/math3d.js';
 import * as store from './app/store.js';
@@ -93,8 +95,13 @@ const app = {
     redraw = true;
   },
   setDims(d) { Object.assign(state.dims, d); redraw = true; },
-  setMaterial(id) { state.material = id; store.emit('material'); store.commit(); redraw = true; },
-  setOption(k, v) { state[k] = v; redraw = true; },
+  setMaterial(id) { state.material = id; store.emit('material'); store.commit(); audio.play('select'); redraw = true; },
+  setOption(k, v) {
+    state[k] = v;
+    if (k === 'sound') audio.sound = v;
+    if (k === 'buzz') audio.haptics = v;
+    redraw = true;
+  },
 
   // ---- tapa ----
   lid(action) {
@@ -102,11 +109,13 @@ const app = {
     if (action === 'open') state.lid = { x: 0, y: d.alto * .55 + 6, z: 0 };
     else if (action === 'aside') state.lid = { x: d.ancho / 2 + lidHalf(d) + 3, y: -(d.alto - d.tapa), z: 0 };
     else state.lid = { x: 0, y: 0, z: 0 };
+    audio.play(action === 'open' || action === 'aside' ? 'lidOpen' : 'lidClose');
     store.commit(); ui.sync(); redraw = true;
     ui.toast(action === 'open' ? 'Tapa abierta' : action === 'aside' ? 'Tapa separada' : 'Tapa colocada');
   },
   toggleLidMove() {
     state.lidPicked = !state.lidPicked;
+    audio.play('toggle');
     ui.sync(); redraw = true;
     ui.toast(state.lidPicked ? 'Arrastra la tapa para moverla' : 'Tapa fijada');
   },
@@ -123,6 +132,7 @@ const app = {
       state.selected = null;
       ui.placing(src);
       ui.sync();
+      audio.play('whoosh');
       ui.toast('Arrastra la imagen sobre la superficie que quieras');
     } catch {
       ui.toast('No se pudo cargar la imagen');
@@ -143,6 +153,7 @@ const app = {
         if (old) { scene.dirty(old.id); g.size = clamp(g.size * old.uLen / hit.face.uLen, .03, 3); }
         else fitSticker(g, hit.face);              // primera superficie tocada
         g.face = hit.face.id;
+        audio.play('hover');
       }
       g.u = hit.u; g.v = hit.v;
       clampSticker(g, hit.face);
@@ -162,6 +173,7 @@ const app = {
     if (hit && hit.face && !g.face) fitSticker(g, hit.face);
     state.hover = null;
     if (!hit || !hit.face) {
+      audio.play('error');
       ui.toast('Suéltala sobre la caja para colocarla');
       redraw = true;
       return;
@@ -174,6 +186,9 @@ const app = {
     app.select(g.id);
     touch(g);
     store.commit();
+    audio.play('place');
+    const c = camera().project(scene.stickerFrame(g)?.center || { x: 0, y: 0, z: 0 });
+    if (c) fx.ring(c.x, c.y, 'ok');
     ui.toast(`Colocada en ${faceLabel(hit.face)}`);
   },
 
@@ -183,6 +198,7 @@ const app = {
     state.stickers = state.stickers.filter(s => s.id !== g.id);
     scene.dirty(g.face);
     state.placing = null; state.hover = null;
+    audio.play('remove');
     ui.placing(null); ui.sync(); redraw = true;
   },
 
@@ -194,6 +210,7 @@ const app = {
     s.face = face.id; s.u = u; s.v = v;
     clampSticker(s, face);
     state.face = face.id;
+    audio.play('hover');
     touch(s); ui.sync();
   },
 
@@ -201,11 +218,12 @@ const app = {
   select(id) {
     if (state.selected === id) return;
     state.selected = id;
-    if (id) { state.face = store.getSticker(id).face; state.lidPicked = false; }
+    if (id) { state.face = store.getSticker(id).face; state.lidPicked = false; audio.play('select'); }
     redraw = true;
     ui.sync();
   },
   pickFace(id) {
+    if (id && id !== state.face) audio.play('select');
     state.face = id;
     if (!id || !scene.faceById(id) || scene.faceById(id).part !== 'lid') state.lidPicked = false;
     redraw = true; ui.sync();
@@ -224,21 +242,24 @@ const app = {
     s.rot = 0; s.ratio = 1;
     fitSticker(s, faceOf(s), .92);
     s.u = s.v = .5;
-    touch(s); store.commit(); ui.toast('Ajustada a la superficie');
+    touch(s); store.commit(); audio.play('success'); ui.toast('Ajustada a la superficie');
   },
   center() {
     const s = sel(); if (!s) return;
     s.u = .5; s.v = .5;
-    touch(s); store.commit(); ui.toast('Centrada');
+    touch(s); store.commit(); audio.play('tick'); ui.toast('Centrada');
   },
   duplicate() {
     const s = sel(); if (!s) return;
     const c = store.newSticker({ ...s, id: undefined, u: clamp(s.u + .1, 0, 1), v: clamp(s.v + .1, 0, 1) });
     state.stickers.push(c);
-    app.select(c.id); store.commit(); touch(c);
+    app.select(c.id); store.commit(); touch(c); audio.play('place');
   },
   remove() {
     const s = sel(); if (!s) return;
+    const p = camera().project(scene.stickerFrame(s)?.center || { x: 0, y: 0, z: 0 });
+    if (p) fx.ring(p.x, p.y, 'danger');
+    audio.play('remove');
     state.stickers = state.stickers.filter(x => x.id !== s.id);
     scene.dirty(s.face);
     app.select(null); store.commit(); redraw = true;
@@ -248,12 +269,14 @@ const app = {
   async cutout() {
     const s = sel(); if (!s) return;
     ui.loading(true, 'Eliminando fondo…');
+    audio.play('cut');
     await new Promise(r => setTimeout(r, 30));      // deja pintar el indicador
     try {
       const out = await removeBackground(images.get(s.imgId));
-      if (!out) { ui.toast('No se detectó un fondo claro'); return; }
+      if (!out) { audio.play('error'); ui.toast('No se detectó un fondo claro'); return; }
       s.imgId = await store.addImage(out);          // conserva posición, giro y tamaño
       touch(s); store.commit();
+      audio.play('success'); fx.flash();
       ui.toast('Fondo eliminado ✂️');
     } catch {
       ui.toast('No se pudo procesar');
@@ -274,18 +297,19 @@ const app = {
   resetView() {
     Object.assign(cam, { theta: VIEW.theta, phi: VIEW.phi, zoom: VIEW.zoom, vTheta: 0, vPhi: 0 });
     cam.pan = v3(0, 0, 0);
-    redraw = true; ui.toast('Vista centrada');
+    redraw = true; audio.play('whoosh'); ui.toast('Vista centrada');
   },
   preview(on) {
     if (on) { app.select(null); app.pickFace(null); }
     state.spin = on ? true : document.getElementById('optSpin').checked;
+    audio.play(on ? 'whoosh' : 'panel');
     ui.preview(on); redraw = true;
   },
 
   // ---- historial ----
-  undo() { store.undo(); after(); },
-  redo() { store.redo(); after(); },
-  reset() { store.resetAll(); after(); ui.toast('Diseño reiniciado'); },
+  undo() { store.undo(); after(); audio.play('undo'); },
+  redo() { store.redo(); after(); audio.play('redo'); },
+  reset() { store.resetAll(); after(); fx.flash(); audio.play('whoosh'); ui.toast('Diseño reiniciado'); },
   commit() { store.commit(); ui.sync(); },
 
   // ---- usados por gestos y manijas ----
@@ -330,8 +354,9 @@ function frame(now) {
     (a.alto * .5) * S + lift * .35 + cam.pan.y,
     a.lz * S * .45 + cam.pan.z,
   );
-  const moving = ['largo', 'ancho', 'alto', 'tapa', 'grosor'].some(k => Math.abs(a[k] - d[k]) > .005)
-    || Math.abs(a.lx - state.lid.x) > .01 || Math.abs(a.ly - state.lid.y) > .01 || Math.abs(a.lz - state.lid.z) > .01
+  const moving = !scene.settled()
+    || ['largo', 'ancho', 'alto', 'tapa', 'grosor'].some(k => a[k] !== d[k])
+    || a.lx !== state.lid.x || a.ly !== state.lid.y || a.lz !== state.lid.z
     || ['x', 'y', 'z'].some(k => Math.abs(cam.target[k] - want[k]) > 1e-4);
 
   if (moving || redraw) {
@@ -345,7 +370,13 @@ function frame(now) {
     overlay.update(c);
     redraw = moving;
     settleT = now;
-    canvas.classList.add('ready');
+    if (!canvas.classList.contains('ready')) {
+      canvas.classList.add('ready');
+      setTimeout(() => {
+        document.body.classList.add('booted');
+        setTimeout(() => document.getElementById('splash')?.remove(), 700);
+      }, 420);
+    }
   } else if (now - settleT < 400) {
     const c = camera();
     scene.draw(c, false);          // un último fotograma nítido al asentarse

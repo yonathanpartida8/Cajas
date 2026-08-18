@@ -2,7 +2,7 @@
 import { buildFaces, S } from '../box/model.js';
 import { paintFace, kraftCanvas, shadowCanvas, frameCanvas, MATERIALS, TILE } from '../box/materials.js';
 import { state, images, stickersOf, on } from './store.js';
-import { rayQuad, damp, v3, add, scale, norm } from '../core/math3d.js';
+import { rayQuad, v3, add, scale, norm } from '../core/math3d.js';
 
 const MAXPX = 640;
 const ACCENT = '#d98232', OK = '#4f9d5d';
@@ -49,16 +49,28 @@ export function createScene(renderer) {
     return p;
   }
 
+  // muelle ligeramente subamortiguado: el cambio de medidas y la tapa "asientan"
+  const vel = { largo: 0, ancho: 0, alto: 0, tapa: 0, grosor: 0, lx: 0, ly: 0, lz: 0 };
+  function spring(key, target, dt, k, d) {
+    vel[key] += (target - anim[key]) * k * dt;
+    vel[key] *= Math.exp(-d * dt);
+    anim[key] += vel[key] * dt;
+    if (Math.abs(target - anim[key]) < 2e-3 && Math.abs(vel[key]) < 2e-3) { anim[key] = target; vel[key] = 0; }
+  }
+
   /** Interpola medidas y tapa; reconstruye la geometría. */
   function update(dt, dragging) {
-    for (const key of ['largo', 'ancho', 'alto', 'tapa', 'grosor']) anim[key] = damp(anim[key], state.dims[key], 11, dt);
-    const speed = dragging ? 60 : 9;
-    anim.lx = damp(anim.lx, state.lid.x, speed, dt);
-    anim.ly = damp(anim.ly, state.lid.y, speed, dt);
-    anim.lz = damp(anim.lz, state.lid.z, speed, dt);
+    for (const key of ['largo', 'ancho', 'alto', 'tapa', 'grosor']) spring(key, state.dims[key], dt, 150, 16);
+    const k = dragging ? 1200 : 140, d = dragging ? 70 : 15;
+    spring('lx', state.lid.x, dt, k, d);
+    spring('ly', state.lid.y, dt, k, d);
+    spring('lz', state.lid.z, dt, k, d);
     faces = buildFaces(anim, { x: anim.lx, y: anim.ly, z: anim.lz });
     return faces;
   }
+
+  /** ¿Se ha detenido toda la animación de la caja? */
+  const settled = () => Object.values(vel).every(v => v === 0);
 
   /** Marco resaltado sobre una cara, ligeramente separado de la superficie. */
   function highlight(list, faceId, color) {
@@ -94,11 +106,15 @@ export function createScene(renderer) {
     if (state.shadow) {
       // sin mipmaps: en planos rasantes el degradado se aplanaría a un rectángulo
       if (!shadowTex) shadowTex = renderer.texture(shadowCanvas(), { mips: false });
-      const rx = (anim.ancho / 2 + 2) * S * 1.75, rz = (anim.largo / 2 + 2) * S * 1.75;
-      list.push({
-        o: v3(-rx, .003, -rz), u: v3(2 * rx, 0, 0), v: v3(0, 0, 2 * rz), n: v3(0, 1, 0),
-        tex: shadowTex, uvScale: [1, 1], unlit: true, noDepth: true, alpha: .95,
-      });
+      const lift = Math.max(0, anim.ly) * S;                 // al levantar la tapa la sombra se abre
+      for (const [m, a] of [[2.9, .5], [1.5, .95]]) {
+        const rx = (anim.ancho / 2 + 2) * S * m, rz = (anim.largo / 2 + 2) * S * m;
+        list.push({
+          o: v3(-rx, .003, -rz), u: v3(2 * rx, 0, 0), v: v3(0, 0, 2 * rz), n: v3(0, 1, 0),
+          tex: shadowTex, uvScale: [1, 1], unlit: true, noDepth: true,
+          alpha: a * Math.max(.35, 1 - lift * .5),
+        });
+      }
     }
 
     // superficie bajo el dedo (verde = se soltará aquí) o superficie elegida
@@ -170,7 +186,7 @@ export function createScene(renderer) {
   return {
     get faces() { return faces; },
     get anim() { return anim; },
-    update, draw, pick, pickSticker, stickerBox, stickerFrame,
+    update, draw, pick, pickSticker, stickerBox, stickerFrame, settled,
     dirty: id => dirty.add(id),
     markAll,
     faceById: id => faces.find(f => f.id === id) || null,

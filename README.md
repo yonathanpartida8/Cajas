@@ -70,6 +70,8 @@ js/
     ui.js             dock, paneles, medidas y colocación
   features/
     removebg.js       eliminación de fondo local
+    audio.js          efectos de sonido sintetizados + vibración
+    fx.js             anillos, destellos y rebotes en pantalla
 ```
 
 ### Cómo está hecho el 3D
@@ -86,6 +88,21 @@ js/
   pantalla, pero **transforman en el plano de la superficie** (rayo → cara), así que la
   escala y el giro son exactos aunque la caja esté en perspectiva.
 * Se dibuja **solo cuando algo cambia**; en reposo la app no consume GPU.
+
+### Sonido, vibración y movimiento
+
+* **Sin archivos de audio**: todos los efectos se sintetizan con Web Audio a partir de
+  dos ingredientes (un tono con caída exponencial y una ráfaga de ruido filtrada), lo que
+  da una paleta "de cartón": golpes suaves al colocar, roce de papel al abrir la tapa,
+  tijeras al recortar el fondo, ticks al ajustar medidas. Pesa unos pocos kB.
+* El contexto de audio se crea en el primer toque (política de iOS) y hay interruptores
+  de **Sonido** y **Vibración** en Ajustes. La vibración usa `navigator.vibrate` cuando existe.
+* Las medidas y la tapa se animan con un **muelle** ligeramente subamortiguado: los cambios
+  asientan con un rebote pequeño en vez de frenar en seco.
+* Sombra de contacto en dos capas (una marcada y otra difusa) que se abre al levantar la tapa,
+  luz de estudio con relleno frío, brillo satinado y oscurecimiento en ángulos rasantes.
+* Detalles de interfaz: pantalla de bienvenida, entrada escalonada de la barra, onda al pulsar,
+  anillo de confirmación donde ocurre cada acción y viñeta que se refuerza en la vista previa.
 
 ### Eliminación de fondo
 

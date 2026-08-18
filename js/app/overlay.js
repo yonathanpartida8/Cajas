@@ -2,6 +2,7 @@
 // Las manijas trabajan en el plano de la superficie (rayo → cara), así que la
 // transformación es exacta aunque la caja esté girada en perspectiva.
 import { clamp } from '../core/math3d.js';
+import { audio } from '../features/audio.js';
 
 const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
 
@@ -48,6 +49,7 @@ export function createOverlay(api) {
       const p0 = local(s, e.clientX, e.clientY, kind === 'scale');
       if (!p0) return;
       drag = { kind, index, id: e.pointerId, s, p0, size: s.size, ratio: s.ratio ?? 1, rot: s.rot };
+      audio.play('grab');
       if (kind === 'rot') drag.a0 = Math.atan2(p0.y, p0.x);
     });
     el.addEventListener('pointermove', e => {
@@ -76,6 +78,7 @@ export function createOverlay(api) {
       el.classList.remove('hot');
       api.scene.dirty(drag.s.face);
       drag = null;
+      audio.play('tick');
       api.commit(); api.redraw();
     };
     el.addEventListener('pointerup', end);
