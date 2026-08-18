@@ -26,7 +26,38 @@ export function createOverlay(api) {
   grip(spin, 'rot');
   root.appendChild(spin);
 
+  const linksSvg = document.getElementById('linksSvg');
   let drag = null;
+
+  /** Líneas punteadas entre interruptores y las tiras que controlan. */
+  function drawLinks(cam) {
+    const st = api.state;
+    const pairs = [];
+    for (const [swId, list] of Object.entries(st.links || {})) {
+      const sw = api.getObject(swId);
+      if (!sw) continue;
+      const showAll = st.object === swId || st.linking === swId;
+      for (const id of list) {
+        const target = api.getObject(id);
+        if (!target) continue;
+        if (!showAll && st.object !== id) continue;          // solo lo relacionado con lo elegido
+        const a = cam.project(api.scene.centerOf(sw));
+        const b = cam.project(api.scene.centerOf(target));
+        if (a && b) pairs.push([a, b]);
+      }
+    }
+    linksSvg.replaceChildren(...pairs.flatMap(([a, b]) => {
+      const NS = 'http://www.w3.org/2000/svg';
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', a.x); l.setAttribute('y1', a.y);
+      l.setAttribute('x2', b.x); l.setAttribute('y2', b.y);
+      const c1 = document.createElementNS(NS, 'circle');
+      c1.setAttribute('cx', a.x); c1.setAttribute('cy', a.y); c1.setAttribute('r', 5);
+      const c2 = document.createElementNS(NS, 'circle');
+      c2.setAttribute('cx', b.x); c2.setAttribute('cy', b.y); c2.setAttribute('r', 5);
+      return [l, c1, c2];
+    }));
+  }
 
   /** Coordenadas del dedo en centímetros, relativas al centro de la imagen. */
   function local(s, x, y, rotated = true) {
@@ -87,6 +118,7 @@ export function createOverlay(api) {
 
   /** Recoloca marco y manijas; se llama en cada fotograma dibujado. */
   function update(cam) {
+    drawLinks(cam);
     const s = api.selected() || api.ghost();
     const fr = s && api.scene.stickerFrame(s);
     if (!fr) { root.hidden = true; return; }

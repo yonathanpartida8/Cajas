@@ -43,8 +43,30 @@ export function createInput(canvas, api) {
     moved = 0; t0 = performance.now();
     cam.vTheta = cam.vPhi = 0;
     const p = pos(e);
+
+    if (api.state.drawing) { mode = 'draw'; api.strokeStrip(p.x, p.y); return; }
+    if (api.state.placingObj) { mode = 'placeObj'; api.moveObject(api.ghostObj(), p.x, p.y); return; }
+
     const hit = api.surfaceAt(p.x, p.y);
     start = { p, hit };
+
+    // los objetos 3D tienen prioridad si están delante de la cara tocada
+    const c = api.camera();
+    const nx = p.x / canvas.clientWidth * 2 - 1, ny = 1 - p.y / canvas.clientHeight * 2;
+    const oHit = api.scene.objectAt(c.eye, c.ray(nx, ny));
+    const solid = api.scene.pick(c.eye, c.ray(nx, ny), { skipPlain: true, skipXray: true });
+    if (oHit && (!solid || oHit.t <= solid.t + .02)) {
+      start.obj = oHit.obj;
+      api.selectObject(oHit.obj.id);
+      if (!oHit.obj.locked && oHit.obj.type !== 'tira') {
+        mode = 'obj';
+        audio.play('grab');
+        return;
+      }
+      if (oHit.obj.locked) api.toast('Objeto fijado · pulsa «Fijar» para soltarlo');
+      mode = 'orbit';
+      return;
+    }
 
     const s = hit && api.scene.pickSticker(hit.face, hit.u, hit.v);
     if (s && !s.ghost) {
@@ -61,6 +83,13 @@ export function createInput(canvas, api) {
 
   /** Al entrar el segundo dedo se decide: transformar la imagen o mover la vista. */
   function twoFingers() {
+    const so = api.selectedObject?.();
+    if (so && !so.locked && so.type !== 'tira') {
+      gesture = { d: spread(), a: twist(), c: centroid(), size: so.scale ?? 1, rot: so.rot || 0, obj: so };
+      mode = 'pinch-obj';
+      audio.play('grab');
+      return;
+    }
     const sel = api.selected();
     const both = sel && [...pts.values()].every(p => {
       const h = api.surfaceAt(p.x, p.y);
@@ -80,7 +109,10 @@ export function createInput(canvas, api) {
     pts.set(e.pointerId, p);
     moved += Math.abs(dx) + Math.abs(dy);
 
-    if (mode === 'view' || mode === 'pinch-img') return pts.size >= 2 && twoFingerMove();
+    if (mode === 'view' || mode === 'pinch-img' || mode === 'pinch-obj') return pts.size >= 2 && twoFingerMove();
+    if (mode === 'draw') return api.strokeStrip(p.x, p.y);
+    if (mode === 'placeObj') return void api.moveObject(api.ghostObj(), p.x, p.y);
+    if (mode === 'obj') return void api.moveObject(start.obj, p.x, p.y, start.obj.y);
     if (mode === 'sticker') return dragSticker(p);
     if (mode === 'lid') return dragLid(dx, dy);
 
@@ -94,6 +126,16 @@ export function createInput(canvas, api) {
 
   function twoFingerMove() {
     const d = spread(), a = twist(), c = centroid();
+    if (mode === 'pinch-obj') {
+      const o = gesture.obj;
+      if (gesture.d > 8) {
+        o.scale = clamp(gesture.size * (d / gesture.d), .3, 3);
+        o.rot = gesture.rot + (a - gesture.a);
+        api.clampObject(o);
+      }
+      gesture.d = d; gesture.a = a; gesture.c = c;
+      return api.redraw();
+    }
     if (mode === 'pinch-img') {
       const s = api.selected();
       if (s && gesture.d > 8) {
@@ -149,8 +191,9 @@ export function createInput(canvas, api) {
     const quick = performance.now() - t0 < 380;
 
     if (wasMode === 'sticker') { api.scene.dirty(api.getSticker(start.grab.id)?.face); api.hover(null); }
-    if (wasMode === 'sticker' || wasMode === 'lid' || wasMode === 'pinch-img') api.commit();
-    if (moved < TAP && quick && (wasMode === 'orbit' || wasMode === 'sticker' || wasMode === 'lid')) tap();
+    if (['sticker', 'lid', 'pinch-img', 'obj', 'pinch-obj'].includes(wasMode)) api.commit();
+    if (wasMode === 'placeObj' && moved > TAP) { api.dropObject(); mode = null; pts.clear(); return; }
+    if (moved < TAP && quick && ['orbit', 'sticker', 'lid', 'obj', 'placeObj', 'draw'].includes(wasMode)) tap();
 
     if (pts.size === 0) {
       mode = null;
@@ -162,8 +205,14 @@ export function createInput(canvas, api) {
     }
   }
 
-  /** Toque corto: elige imagen, superficie, o deselecciona. */
+  /** Toque corto: elige imagen, objeto, superficie, o deselecciona. */
   function tap() {
+    if (api.state.placingObj) { api.dropObject(); return; }
+    if (api.state.drawing) return;
+    if (start?.obj) {                                  // interruptor: cambia de modo al tocarlo
+      if (api.isSwitch(start.obj)) api.cycleSwitch(start.obj);
+      return;
+    }
     const hit = start?.hit;
     if (api.state.placing) {                       // colocar con un toque en la superficie
       if (!hit) { api.toast('Toca una superficie de la caja'); return; }
@@ -171,10 +220,10 @@ export function createInput(canvas, api) {
       api.dropGhost(start.p.x, start.p.y, false);
       return;
     }
-    if (!hit) { api.select(null); api.pickFace(null); return; }
+    if (!hit) { api.select(null); api.selectObject(null); api.pickFace(null); return; }
     const s = api.scene.pickSticker(hit.face, hit.u, hit.v);
     if (s && !s.ghost) { api.select(s.id); return; }
-    api.select(null);
+    api.select(null); api.selectObject(null);
     api.pickFace(hit.face.id);
   }
 

@@ -10,6 +10,8 @@ import * as fx from './features/fx.js';
 import { extent, faceLabel, faceShort, lidHalf, S, LIMITS } from './box/model.js';
 import { clamp, damp, v3, rayPlane } from './core/math3d.js';
 import * as store from './app/store.js';
+import { CATALOG } from './objects/catalog.js';
+import { clampObject, hasAnimation, MODES, MODE_NAME, stripCenter } from './app/objects.js';
 
 const { state, images } = store;
 const canvas = document.getElementById('scene');
@@ -59,8 +61,55 @@ function planeAt(x, y, face) {
   return rayPlane(c.eye, c.ray(nx, ny), face);
 }
 
+/** Píxeles CSS → punto dentro de la caja (cm). Prefiere superficies horizontales. */
+function spotAt(px, py, planeY = null) {
+  const c = camera();
+  const nx = px / canvas.clientWidth * 2 - 1, ny = 1 - py / canvas.clientHeight * 2;
+  const rd = c.ray(nx, ny), ro = c.eye;
+  if (planeY === null) {
+    const hit = scene.pick(ro, rd, { skipPlain: true, skipXray: true });
+    if (hit && hit.face.n.y > .5) {
+      return { x: (ro.x + rd.x * hit.t) / S, y: (ro.y + rd.y * hit.t) / S, z: (ro.z + rd.z * hit.t) / S, face: hit.face };
+    }
+  }
+  const y = (planeY ?? state.dims.grosor) * S;             // plano de apoyo
+  const t = (y - ro.y) / (rd.y || 1e-6);
+  if (t <= 0) return null;
+  return { x: (ro.x + rd.x * t) / S, y: y / S, z: (ro.z + rd.z * t) / S, face: null };
+}
+
+/** Punto sobre la superficie interior que toca el dedo, separado un poco de ella. */
+function surfacePoint(px, py) {
+  const c = camera();
+  const nx = px / canvas.clientWidth * 2 - 1, ny = 1 - py / canvas.clientHeight * 2;
+  const rd = c.ray(nx, ny), ro = c.eye;
+  const hit = scene.pick(ro, rd, { skipPlain: true, skipXray: true });
+  const d = state.dims, t = d.grosor;
+  let p = null;
+  if (hit && hit.face.side === 'in') {                      // paredes o fondo interiores
+    const o = .9;                                           // cm de separación
+    p = {
+      x: (ro.x + rd.x * hit.t) / S + hit.face.n.x * o,
+      y: (ro.y + rd.y * hit.t) / S + hit.face.n.y * o,
+      z: (ro.z + rd.z * hit.t) / S + hit.face.n.z * o,
+    };
+  } else {
+    const s = spotAt(px, py);                               // si no, sobre el fondo
+    if (!s) return null;
+    p = { x: s.x, y: Math.max(t + .9, s.y), z: s.z };
+  }
+  const ix = Math.max(.5, d.ancho / 2 - t - .6), iz = Math.max(.5, d.largo / 2 - t - .6);
+  p.x = clamp(p.x, -ix, ix);
+  p.z = clamp(p.z, -iz, iz);
+  p.y = clamp(p.y, t + .5, d.alto + d.grosor);
+  return p;
+}
+
 // ---------------------------------------------------------------- acciones
 const sel = () => store.getSticker(state.selected);
+const selObj = () => store.getObject(state.object);
+const ghostObj = () => (state.placingObj ? store.getObject(state.placingObj) : null);
+const touchObj = () => { redraw = true; };
 const ghost = () => (state.placing ? store.getSticker(state.placing) : null);
 const faceOf = s => s && scene.faceById(s.face);
 const touch = s => { if (s) { scene.dirty(s.face); redraw = true; } };
@@ -285,6 +334,226 @@ const app = {
     }
   },
 
+  // ---- objetos 3D ----
+  tool(kind) {
+    if (kind === 'foto') { document.getElementById('filePick').click(); return; }
+    if (kind === 'forro') {
+      state.lineTool = 'forrar';
+      ui.open('forro'); ui.sync(); redraw = true;
+      ui.toast('Toca una parte de la caja para forrarla');
+      return;
+    }
+    if (kind === 'tira') app.startStrip();
+  },
+
+  addObject(type) {
+    const def = CATALOG[type];
+    if (!def) return;
+    app.cancelObject();
+    app.select(null);
+    const o = store.newObject({
+      type, color: def.color, ghost: true,
+      y: state.dims.grosor, z: 0, x: 0,
+      ...(def.params ? { pw: 1.6, ph: 6, pt: .12 } : {}),
+      ...(def.switch ? { mode: 'off' } : {}),
+    });
+    state.objects.push(o);
+    state.placingObj = o.id;
+    state.object = null;
+    ui.bar({ title: `Coloca ${def.name.toLowerCase()}`, hint: 'arrástralo o toca dentro de la caja', ok: 'Colocar' },
+      () => app.dropObject(), () => app.cancelObject());
+    audio.play('whoosh');
+    ui.sync(); redraw = true;
+  },
+
+  /** Mueve el objeto fantasma bajo el dedo (o el objeto ya colocado). */
+  moveObject(o, px, py, planeY = null) {
+    const p = spotAt(px, py, planeY);
+    if (!p) return false;
+    o.x = p.x; o.z = p.z;
+    if (planeY === null) o.y = Math.max(state.dims.grosor, p.y);
+    clampObject(o, state.dims, scene.meshOf(o));
+    redraw = true;
+    return true;
+  },
+
+  dropObject() {
+    const g = ghostObj();
+    if (!g) return;
+    delete g.ghost;
+    state.placingObj = null;
+    state.object = g.id;
+    ui.bar(null);
+    const c = camera().project(scene.centerOf(g));
+    if (c) fx.ring(c.x, c.y, 'ok');
+    audio.play('place');
+    store.commit(); ui.sync(); redraw = true;
+    ui.toast(`${CATALOG[g.type].name} · arrástralo para moverlo`);
+  },
+
+  cancelObject() {
+    const g = ghostObj();
+    if (!g) return;
+    state.objects = state.objects.filter(o => o.id !== g.id);
+    state.placingObj = null;
+    ui.bar(null); ui.sync(); redraw = true;
+  },
+
+  selectObject(id) {
+    if (state.object === id) return;
+    state.object = id;
+    if (id) { app.select(null); state.face = null; audio.play('select'); }
+    if (state.linking && id && id !== state.linking) app.linkTo(id);
+    ui.sync(); redraw = true;
+  },
+  selectedObject: selObj,
+
+  objSet(k, v) {
+    const o = selObj(); if (!o) return;
+    o[k] = v;
+    clampObject(o, state.dims, scene.meshOf(o));
+    redraw = true;
+  },
+  objColor(hex) {
+    const o = selObj(); if (!o) return;
+    o.color = hex; store.commit(); redraw = true;
+  },
+  centerObject() {
+    const o = selObj(); if (!o) return;
+    o.x = 0; o.z = 0;
+    clampObject(o, state.dims, scene.meshOf(o));
+    audio.play('tick'); store.commit(); redraw = true;
+    ui.toast('Objeto centrado');
+  },
+  floorObject() {
+    const o = selObj(); if (!o) return;
+    o.y = state.dims.grosor;
+    audio.play('tick'); store.commit(); redraw = true;
+    ui.toast('Apoyado en el fondo');
+  },
+  duplicateObject() {
+    const o = selObj(); if (!o) return;
+    const c = store.newObject({ ...o, id: undefined, x: o.x + 2, z: o.z + 2 });
+    if (o.path) c.path = o.path.map(p => [...p]);
+    clampObject(c, state.dims, scene.meshOf(c));
+    state.objects.push(c);
+    state.object = c.id;
+    audio.play('place'); store.commit(); ui.sync(); redraw = true;
+  },
+  lockObject() {
+    const o = selObj(); if (!o) return;
+    o.locked = !o.locked;
+    audio.play('toggle'); store.commit(); ui.sync(); redraw = true;
+    ui.toast(o.locked ? 'Objeto fijado' : 'Objeto libre');
+  },
+  removeObject() {
+    const o = selObj(); if (!o) return;
+    const p = camera().project(scene.centerOf(o));
+    if (p) fx.ring(p.x, p.y, 'danger');
+    audio.play('remove');
+    state.objects = state.objects.filter(x => x.id !== o.id);
+    delete state.links[o.id];
+    for (const k in state.links) state.links[k] = state.links[k].filter(id => id !== o.id);
+    state.object = null;
+    store.commit(); ui.sync(); redraw = true;
+    ui.toast('Objeto eliminado');
+  },
+
+  // ---- tiras de luces ----
+  startStrip() {
+    app.select(null); app.selectObject(null);
+    state.drawing = { path: [], color: '#fff3d6', thick: .5 };
+    ui.bar({ title: 'Dibuja la tira de luces', hint: 'desliza el dedo por el interior', ok: 'Listo' },
+      () => app.endStrip(true), () => app.endStrip(false));
+    audio.play('whoosh'); ui.sync(); redraw = true;
+  },
+  strokeStrip(px, py) {
+    const d = state.drawing; if (!d) return;
+    const p = surfacePoint(px, py);
+    if (!p) return;
+    const last = d.path[d.path.length - 1];
+    if (last && Math.hypot(p.x - last[0], p.y - last[1], p.z - last[2]) < 1.4) return;
+    d.path.push([p.x, p.y, p.z]);
+    if (d.path.length % 3 === 0) audio.play('tick');
+    redraw = true;
+  },
+  endStrip(keep) {
+    const d = state.drawing;
+    state.drawing = null;
+    ui.bar(null);
+    if (keep && d && d.path.length > 2) {
+      const o = store.newObject({ type: 'tira', path: d.path, color: d.color, thick: d.thick, mode: 'warm' });
+      state.objects.push(o);
+      state.object = o.id;
+      audio.play('success'); fx.flash();
+      store.commit();
+      ui.toast('Tira de luces creada · conéctala a un interruptor');
+    } else if (keep) {
+      audio.play('error');
+      ui.toast('Traza un recorrido más largo');
+    }
+    ui.sync(); redraw = true;
+  },
+
+  // ---- interruptor y conexiones ----
+  cycleSwitch(o) {
+    o.mode = MODES[(MODES.indexOf(o.mode || 'off') + 1) % MODES.length];
+    audio.play(o.mode === 'off' ? 'toggle' : 'success');
+    ui.toast(MODE_NAME[o.mode]);
+    store.commit(); ui.sync(); redraw = true;
+  },
+  setSwitchMode(m) {
+    const o = selObj(); if (!o) return;
+    o.mode = m; audio.play('toggle'); store.commit(); redraw = true;
+  },
+  startLink() {
+    const o = selObj(); if (!o) return;
+    state.linking = o.id;
+    ui.open(null);
+    ui.bar({ title: 'Toca una tira de luces', hint: 'para conectarla a este interruptor', ok: 'Terminar' },
+      () => { state.linking = null; ui.bar(null); ui.sync(); }, () => { state.linking = null; ui.bar(null); ui.sync(); });
+    ui.sync(); redraw = true;
+  },
+  linkTo(id) {
+    const sw = store.getObject(state.linking), target = store.getObject(id);
+    if (!sw || !target || target.type !== 'tira') { audio.play('error'); ui.toast('Elige una tira de luces'); return; }
+    const list = state.links[sw.id] || (state.links[sw.id] = []);
+    const i = list.indexOf(id);
+    if (i >= 0) { list.splice(i, 1); ui.toast('Conexión eliminada'); }
+    else { list.push(id); ui.toast('Tira conectada · toca el interruptor para encenderla'); }
+    audio.play('success');
+    state.linking = null;                     // una conexión por vez: sin toques accidentales
+    state.object = sw.id;
+    ui.bar(null);
+    store.commit(); ui.sync(); redraw = true;
+  },
+
+  // ---- forrar cartón ----
+  setLining(patch) {
+    const id = state.face;
+    if (!id) { audio.play('error'); ui.toast('Toca antes una parte de la caja'); return; }
+    const cur = state.lining[id] || { color: '#ffffff', finish: 'papel' };
+    state.lining[id] = { ...cur, ...patch };
+    scene.dirty(id); store.commit(); redraw = true;
+  },
+  liningAll() {
+    const cur = state.lining[state.face] || { color: '#f2a5b8', finish: 'papel' };
+    for (const f of scene.faces) state.lining[f.id] = { ...cur };
+    scene.markAll(); audio.play('success'); store.commit(); redraw = true;
+    ui.toast('Toda la caja forrada');
+  },
+  clearLining() {
+    if (state.face) delete state.lining[state.face];
+    else state.lining = {};
+    scene.markAll(); audio.play('remove'); store.commit(); redraw = true;
+    ui.toast('Forro quitado');
+  },
+  currentLining() {
+    const f = state.face ? scene.faceById(state.face) : null;
+    const l = state.face ? state.lining[state.face] : null;
+    return { name: f ? faceShort(f) : null, color: l?.color, finish: l?.finish };
+  },
+
   // ---- vista ----
   pan(dx, dy) {
     const c = camera();
@@ -314,6 +583,9 @@ const app = {
 
   // ---- usados por gestos y manijas ----
   state, scene, cam, camera, surfaceAt, planeAt, touch, clampSticker,
+  spotAt, ghostObj, getObject: store.getObject,
+  clampObject: o => clampObject(o, state.dims, scene.meshOf(o)),
+  isSwitch: o => !!CATALOG[o.type]?.switch,
   selected: sel, ghost, getSticker: store.getSticker,
   redraw: () => { redraw = true; },
   toast: m => ui.toast(m),
@@ -331,9 +603,12 @@ store.on(w => { redraw = true; if (w === 'history' || w === 'restore') ui.sync()
 addEventListener('resize', () => { redraw = true; });
 let prev = performance.now(), settleT = 0;
 
+let clock = 0, lastGlow = 0;
 function frame(now) {
   const dt = Math.min(.05, (now - prev) / 1000);
   prev = now;
+  clock += dt;
+  if (hasAnimation(state.objects, state.links) && now - lastGlow > 48) { lastGlow = now; redraw = true; }
 
   if (state.spin) { cam.theta += dt * .28; redraw = true; }
   else if (Math.abs(cam.vTheta) > 1e-4 || Math.abs(cam.vPhi) > 1e-4) {   // inercia al soltar
@@ -366,7 +641,7 @@ function frame(now) {
     for (const k of ['x', 'y', 'z']) cam.target[k] = damp(cam.target[k], want[k], 12, dt);
     renderer.resize(state.hq ? 2 : 1.25);
     const c = camera();
-    scene.draw(c, fast);
+    scene.draw(c, fast, clock);
     overlay.update(c);
     redraw = moving;
     settleT = now;
@@ -379,7 +654,7 @@ function frame(now) {
     }
   } else if (now - settleT < 400) {
     const c = camera();
-    scene.draw(c, false);          // un último fotograma nítido al asentarse
+    scene.draw(c, false, clock);   // un último fotograma nítido al asentarse
     overlay.update(c);
     settleT = 0;
   }

@@ -1,8 +1,10 @@
 // Escena: anima medidas/tapa, mantiene texturas por cara y resuelve el picking.
 import { buildFaces, S } from '../box/model.js';
-import { paintFace, kraftCanvas, shadowCanvas, frameCanvas, MATERIALS, TILE } from '../box/materials.js';
+import { paintFace, kraftCanvas, liningCanvas, shadowCanvas, frameCanvas, finishOf, MATERIALS, TILE } from '../box/materials.js';
 import { state, images, stickersOf, on } from './store.js';
 import { rayQuad, v3, add, scale, norm } from '../core/math3d.js';
+import { objectMesh, transform, collectLights, pickObject, objectCenter, stripMode, modeColor, hex2rgb } from './objects.js';
+import { CATALOG } from '../objects/catalog.js';
 
 const MAXPX = 640;
 const ACCENT = '#d98232', OK = '#4f9d5d';
@@ -10,7 +12,7 @@ const ACCENT = '#d98232', OK = '#4f9d5d';
 export function createScene(renderer) {
   const anim = { ...state.dims, lx: 0, ly: 0, lz: 0 };
   const panels = new Map();          // faceId → {canvas,ctx,tex,w,h}
-  const krafts = new Map();          // material → textura repetida
+  const krafts = new Map();          // material/forro → textura repetida
   const frames = new Map();          // color → textura de marco
   const dirty = new Set();
   let faces = buildFaces(anim, { x: 0, y: 0, z: 0 });
@@ -41,10 +43,24 @@ export function createScene(renderer) {
     return p;
   }
 
+  const skinOf = f => ({ material: state.material, lining: state.lining[f.id] || null });
+  const texKey = f => {
+    const l = state.lining[f.id];
+    return l ? `l|${l.color}|${l.finish}` : `m|${state.material}`;
+  };
+  const baseTex = f => {
+    const k = texKey(f);
+    if (!krafts.has(k)) {
+      const l = state.lining[f.id];
+      krafts.set(k, renderer.texture(l ? liningCanvas(l.color, l.finish) : kraftCanvas(state.material), { repeat: true }));
+    }
+    return krafts.get(k);
+  };
+
   function repaint(f, fast) {
     const p = panel(f);
     const list = stickersOf(f.id).map(s => ({ ...s, img: images.get(s.imgId) }));
-    paintFace(p.ctx, { w: p.w, h: p.h, uLen: f.uLen }, list, state.material);
+    paintFace(p.ctx, { w: p.w, h: p.h, uLen: f.uLen }, list, skinOf(f));
     p.tex = p.tex ? p.tex.update(p.canvas, fast) : renderer.texture(p.canvas);
     return p;
   }
@@ -55,16 +71,22 @@ export function createScene(renderer) {
     vel[key] += (target - anim[key]) * k * dt;
     vel[key] *= Math.exp(-d * dt);
     anim[key] += vel[key] * dt;
-    if (Math.abs(target - anim[key]) < 2e-3 && Math.abs(vel[key]) < 2e-3) { anim[key] = target; vel[key] = 0; }
+    // 0,01 cm es invisible: cortamos ahí para que la escena entre en reposo de verdad
+    if (Math.abs(target - anim[key]) < .01 && Math.abs(vel[key]) < .05) { anim[key] = target; vel[key] = 0; }
   }
 
   /** Interpola medidas y tapa; reconstruye la geometría. */
   function update(dt, dragging) {
-    for (const key of ['largo', 'ancho', 'alto', 'tapa', 'grosor']) spring(key, state.dims[key], dt, 150, 16);
+    // pasos de 1/60 s como máximo: el muelle es estable aunque el móvil vaya lento
+    const steps = Math.max(1, Math.min(8, Math.ceil(dt * 60)));
+    const h = dt / steps;
     const k = dragging ? 1200 : 140, d = dragging ? 70 : 15;
-    spring('lx', state.lid.x, dt, k, d);
-    spring('ly', state.lid.y, dt, k, d);
-    spring('lz', state.lid.z, dt, k, d);
+    for (let i = 0; i < steps; i++) {
+      for (const key of ['largo', 'ancho', 'alto', 'tapa', 'grosor']) spring(key, state.dims[key], h, 150, 16);
+      spring('lx', state.lid.x, h, k, d);
+      spring('ly', state.lid.y, h, k, d);
+      spring('lz', state.lid.z, h, k, d);
+    }
     faces = buildFaces(anim, { x: anim.lx, y: anim.ly, z: anim.lz });
     return faces;
   }
@@ -84,22 +106,34 @@ export function createScene(renderer) {
     });
   }
 
-  function draw(cam, fast) {
+  function draw(cam, fast, t = 0) {
     const list = [];
+    // al editar dentro de la caja, las paredes que tapan la vista se vuelven translúcidas
+    const xrayOn = !!(state.xray || state.placingObj || state.drawing || state.lineTool === 'tira');
+    for (const f of faces) {
+      const cx = f.o.x + (f.u.x + f.v.x) / 2, cy = f.o.y + (f.u.y + f.v.y) / 2, cz = f.o.z + (f.u.z + f.v.z) / 2;
+      f.xray = xrayOn && f.part === 'box' && f.side === 'out'
+        && (f.n.x * (cam.eye.x - cx) + f.n.y * (cam.eye.y - cy) + f.n.z * (cam.eye.z - cz)) > 0
+        && f.n.y < .5;
+    }
     for (const f of faces) {
       const has = !f.plain && stickersOf(f.id).length > 0;
+      const lin = state.lining[f.id];
       let tex, uvScale;
       if (has) {
         const p = panel(f);                       // marca dirty si cambió de tamaño
         if (dirty.has(f.id) || !p.tex) { dirty.delete(f.id); repaint(f, fast); }
         tex = p.tex; uvScale = [1, 1];
       } else {
-        tex = cached(krafts, state.material, kraftCanvas, { repeat: true });
+        tex = baseTex(f);
         uvScale = [f.uLen / TILE, f.vLen / TILE];
       }
       list.push({
         ...f, tex, uvScale,
-        hi: (state.lidPicked && f.part === 'lid') ? .5 : 0,
+        alpha: f.xray ? .28 : 1, noDepth: f.xray,
+        gloss: lin ? finishOf(lin.finish).gloss : .04,
+        hi: (state.lidPicked && f.part === 'lid') ? .5
+          : (state.lineTool === 'forrar' && state.face === f.id) ? .35 : 0,
       });
     }
 
@@ -121,7 +155,33 @@ export function createScene(renderer) {
     if (state.hover) highlight(list, state.hover, OK);
     else if (state.face) highlight(list, state.face, ACCENT);
 
-    renderer.render(list, cam);
+    renderer.begin(cam, collectLights(state.objects, state.links, t));
+    renderer.quads(list);
+    renderer.meshes(meshList(t));
+  }
+
+  /** Objetos 3D listos para dibujar (con su color, brillo y transformación). */
+  function meshList(t) {
+    const out = [];
+    const list = [...state.objects].sort((a, b) => (a.ghost ? 1 : 0) - (b.ghost ? 1 : 0));
+    for (const o of list) {
+      const m = objectMesh(o, renderer);
+      const { model, nor } = transform(o);
+      let emissive = [0, 0, 0];
+      if (o.type === 'tira') emissive = modeColor(stripMode(o, state.objects, state.links), t, .2);
+      else if (o.type === 'interruptor') emissive = modeColor(o.mode || 'off', t, .5);
+      else if (CATALOG[o.type]?.light) emissive = modeColor('warm', t, o.x);
+      out.push({
+        mesh: m, model, nor,
+        color: hex2rgb(o.color || '#ffffff'),
+        emissive,
+        alpha: o.ghost ? .6 : 1,
+        xray: !!o.ghost,
+        hi: state.object === o.id ? .45 : 0,
+        gloss: o.type === 'tira' ? .3 : .14,
+      });
+    }
+    return out;
   }
 
   /** Rayo → cara + coordenadas normalizadas de esa cara. */
@@ -129,6 +189,7 @@ export function createScene(renderer) {
     let best = null;
     for (const f of faces) {
       if (opts.skipPlain && f.plain) continue;
+      if (opts.skipXray && f.xray) continue;
       const h = rayQuad(ro, rd, f);
       if (h && (!best || h.t < best.t)) best = { ...h, face: f };
     }
@@ -184,6 +245,10 @@ export function createScene(renderer) {
   }
 
   return {
+    meshList,
+    objectAt: (ro, rd) => pickObject(ro, rd, state.objects, o => objectMesh(o, renderer)),
+    meshOf: o => objectMesh(o, renderer),
+    centerOf: o => objectCenter(o, objectMesh(o, renderer)),
     get faces() { return faces; },
     get anim() { return anim; },
     update, draw, pick, pickSticker, stickerBox, stickerFrame, settled,

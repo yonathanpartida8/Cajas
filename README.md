@@ -48,6 +48,49 @@ Las imágenes se pintan **dentro de la textura de la cara**, no como planos flot
 por eso quedan adheridas al girar la caja, y se recortan al límite de la superficie
 (nunca se salen ni saltan a otra cara por su cuenta).
 
+## Objetos 3D dentro de la caja
+
+Todo lo que entra en la caja son **mallas 3D reales** generadas por código (nada de
+modelos descargados): osito, corazones, cartas, rosas y flores, regalos, moños,
+estrellas, velas, papel picado e interruptores. Se construyen combinando primitivas
+—cajas, elipsoides, cilindros, anillos, extrusiones de contornos y cintas rizadas— con
+un color propio por pieza y un color principal que el usuario elige.
+
+* **Colocación**: eliges el objeto en la biblioteca y se coloca **donde tocas**, sobre la
+  superficie horizontal bajo el dedo o sobre el fondo de la caja. Mientras lo colocas se
+  ve una vista previa translúcida que atraviesa las paredes.
+* **Controles**: arrastrar mueve sobre el plano; el carril vertical de la derecha cambia
+  la altura (eje Y); pellizcar escala y gira; y en su hoja hay tamaño, giro, altura,
+  color, centrar, apoyar en el fondo, duplicar, fijar y borrar.
+* **Papel picado**: además de color, tiene **ancho, largo y grosor** independientes, así
+  que puedes llenar la caja con virutas de distintos tamaños y colores.
+* Ningún objeto atraviesa las paredes: la posición se limita al interior según su tamaño.
+
+### Tiras de luces, interruptores y conexiones
+
+* **Tira de luces**: se **dibuja con el dedo** por el interior de la caja. El trazado se
+  convierte en un cable 3D con bombillas cada pocos centímetros, pegado a las paredes.
+* Las bombillas **iluminan de verdad**: cada tira aporta luces puntuales al motor (hasta
+  8 simultáneas) que bañan el cartón y los objetos cercanos.
+* **Interruptor**: al tocarlo cicla entre *apagado → luz cálida → romántico (colores que
+  cambian) → luz blanca*, con parpadeo suave en cada modo.
+* **Conexiones**: con el interruptor seleccionado, «Conectar» y luego tocas la tira. La
+  relación se dibuja como una línea punteada entre ambos. Un interruptor puede controlar
+  varias tiras y la conexión se quita tocándola otra vez.
+
+### Forrar el cartón
+
+La herramienta **Forrar** aplica color y acabado (papel, cartulina, tela, brillante,
+mate) a la parte de la caja que toques; cada cara puede llevar el suyo, o puedes aplicar
+el mismo a toda la caja. El acabado cambia la trama de la textura y el brillo especular
+del material.
+
+### Ver el interior
+
+Al colocar objetos o dibujar luces, las paredes que tapan la vista se vuelven
+translúcidas automáticamente. En Ajustes hay un interruptor **Ver el interior** para
+dejarlas así de forma permanente mientras decoras.
+
 ## Estructura
 
 ```
@@ -58,7 +101,7 @@ js/
   main.js             arranque, acciones y bucle de render
   core/
     math3d.js         vectores, matrices e intersección rayo-cuadrilátero
-    renderer.js       WebGL2: programa único, quads texturizados y cámara
+    renderer.js       WebGL2: quads texturizados + mallas 3D y luces puntuales
   box/
     model.js          medidas (cm) → caras 3D de la caja y la tapa
     materials.js      textura de cartón procedural y pintado de caras
@@ -66,8 +109,12 @@ js/
     store.js          estado, historial (deshacer/rehacer) e imágenes
     scene.js          animación, texturas por cara, resaltados y picking
     input.js          gestos táctiles (vista, imágenes, tapa)
-    overlay.js        marco y manijas de la imagen seleccionada
+    objects.js        objetos 3D: mallas, transformaciones, luces y conexiones
+    overlay.js        marco, manijas y líneas de conexión
     ui.js             dock, paneles, medidas y colocación
+  objects/
+    shapes.js         primitivas de malla (cajas, elipsoides, tubos, extrusiones…)
+    catalog.js        biblioteca de objetos por categorías
   features/
     removebg.js       eliminación de fondo local
     audio.js          efectos de sonido sintetizados + vibración
@@ -76,6 +123,9 @@ js/
 
 ### Cómo está hecho el 3D
 
+* El motor tiene dos programas: uno para las **caras planas** de la caja (textura por cara) y
+  otro para las **mallas 3D** (color por vértice + color elegido). Ambos comparten la misma
+  luz de estudio y hasta 8 luces puntuales dinámicas de velas y tiras.
 * La caja y la tapa se describen como una lista de **caras** (`o`, `u`, `v`, `n`): 28 quads en total.
   Cada fotograma se reconstruyen a partir de las medidas interpoladas, así que cambiar el
   tamaño se anima solo y nada se rompe.
@@ -87,7 +137,10 @@ js/
 * Las manijas son elementos del DOM colocados proyectando las esquinas de la imagen a
   pantalla, pero **transforman en el plano de la superficie** (rayo → cara), así que la
   escala y el giro son exactos aunque la caja esté en perspectiva.
-* Se dibuja **solo cuando algo cambia**; en reposo la app no consume GPU.
+* Los objetos se seleccionan con rayo-esfera y las tiras con distancia rayo-segmento,
+  para poder tocar un cable fino con el dedo.
+* Se dibuja **solo cuando algo cambia**; en reposo la app no consume GPU. El parpadeo de las
+  luces refresca a ~20 fps en vez de 60, y las mallas se cachean por tipo, color y medidas.
 
 ### Sonido, vibración y movimiento
 
@@ -116,7 +169,11 @@ sin tocar nada más.
 
 * **Más tipos de caja** → añade un constructor de caras junto a `buildFaces()` en `box/model.js`.
   El resto de la aplicación solo necesita la lista de caras.
+* **Más objetos 3D** → una entrada nueva en `CATALOG` (`objects/catalog.js`) con su
+  categoría, emoji, color y función `build()`. Aparece sola en la biblioteca y hereda
+  colocación, color, escala, giro, altura, duplicar, fijar y borrar.
 * **Más materiales** → añade una entrada a `MATERIALS` en `box/materials.js` (aparece sola en el panel).
+* **Más acabados de forro** → una entrada en `FINISHES` (`box/materials.js`).
 * **Más medidas** → añade la clave a `LIMITS` en `box/model.js` y una fila a `DIMS` en `app/ui.js`;
   el control «− valor +» con arrastre se genera solo.
 * **Más herramientas** → un botón en el dock de `index.html` y su acción en el objeto `app` de `main.js`.

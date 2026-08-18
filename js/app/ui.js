@@ -1,6 +1,8 @@
 // Interfaz: dock, hojas, medidas con − / + y arrastre, y colocación de imágenes.
 import { LIMITS } from '../box/model.js';
-import { MATERIALS } from '../box/materials.js';
+import { MATERIALS, FINISHES } from '../box/materials.js';
+import { CATEGORIES, CATALOG_LIST, CATALOG, PALETTE } from '../objects/catalog.js';
+import { MODES, MODE_NAME } from './objects.js';
 import { state, canUndo, canRedo } from './store.js';
 import { audio } from '../features/audio.js';
 import { bump } from '../features/fx.js';
@@ -26,6 +28,7 @@ export function createUI(app) {
     undo: $('#btnUndo'), redo: $('#btnRedo'), file: $('#filePick'), exit: $('#exitPreview'),
     surface: $('#surface'), surfaceName: $('#surfaceName'), surfaceMove: $('#surfaceMove'),
     drop: $('#drop'), dropImg: $('#dropImg'), lock: $('#lock'),
+    dockObject: $('#dockObject'), zbar: $('#zbar'), drawbar: $('#drawbar'),
   };
   let sheet = null, toastT = 0;
 
@@ -71,48 +74,58 @@ export function createUI(app) {
     s.addEventListener('pointercancel', () => { y0 = null; s.style.transform = ''; });
   });
 
+  // ------------------------------------------------- fila «− valor +» genérica
+  function stepRow(parent, o) {
+    const row = document.createElement('div');
+    row.className = 'dim';
+    row.innerHTML = `
+      <div class="dim-info"><b>${o.label}</b><small>${o.hint || ''}</small></div>
+      <div class="stepper">
+        <button class="st-btn" aria-label="Reducir ${o.label}"><i class="ic ic-minus"></i></button>
+        <div class="st-val" role="slider" tabindex="0"><b>0</b><i>${o.unit ?? 'cm'}</i></div>
+        <button class="st-btn" aria-label="Aumentar ${o.label}"><i class="ic ic-plus"></i></button>
+      </div>`;
+    const [minus, plus] = row.querySelectorAll('.st-btn');
+    const val = row.querySelector('.st-val'), num = val.querySelector('b');
+    const bump2 = d => { o.set(+(o.get() + d * o.step).toFixed(2)); refresh(); audio.play('tick'); };
+    hold(minus, () => bump2(-1));
+    hold(plus, () => bump2(1));
+    scrub(val, dx => {
+      const q = Math.round(dx / 9);
+      if (!q) return false;
+      o.set(+(o.get() + q * o.step).toFixed(2)); refresh();
+      audio.play('tick');
+      return true;
+    });
+    function refresh() {
+      const v = o.get();
+      const txt = o.step < 1 ? v.toFixed(1) : String(Math.round(v));
+      if (num.textContent !== txt) { num.textContent = txt; bump(num); }
+      minus.disabled = v <= o.min + 1e-6;
+      plus.disabled = v >= o.max - 1e-6;
+    }
+    parent.appendChild(row);
+    refresh();
+    return refresh;
+  }
+
   // ---------------------------------------------------------------- medidas
   const rows = {};
   const box = $('#dims');
   for (const [key, label, hint] of DIMS) {
     const [min, max, , stepSize] = LIMITS[key];
-    const row = document.createElement('div');
-    row.className = 'dim';
-    row.innerHTML = `
-      <div class="dim-info"><b>${label}</b><small>${hint}</small></div>
-      <div class="stepper">
-        <button class="st-btn" aria-label="Reducir ${label}"><i class="ic ic-minus"></i></button>
-        <div class="st-val" role="slider" tabindex="0"><b>0</b><i>cm</i></div>
-        <button class="st-btn" aria-label="Aumentar ${label}"><i class="ic ic-plus"></i></button>
-      </div>`;
-    const [minus, plus] = row.querySelectorAll('.st-btn');
-    const val = row.querySelector('.st-val');
-    const num = val.querySelector('b');
-    const step = d => app.setDim(key, +(state.dims[key] + d * stepSize).toFixed(2));
-    hold(minus, () => { step(-1); sync(); audio.play('tick'); });
-    hold(plus, () => { step(1); sync(); audio.play('tick'); });
-    scrub(val, dx => {                                        // deslizar sobre el número
-      const q = Math.round(dx / 9);
-      if (!q) return false;
-      app.setDim(key, +(state.dims[key] + q * stepSize).toFixed(2));
-      sync(); audio.play('tick');
-      return true;
+    rows[key] = stepRow(box, {
+      label, hint, min, max, step: stepSize,
+      get: () => state.dims[key],
+      set: v => app.setDim(key, v),
     });
-    rows[key] = { num, minus, plus, min, max };
-    box.appendChild(row);
   }
   document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
     app.setDims(PRESETS[b.dataset.preset]); app.commit(); syncDims();
   });
 
   function syncDims() {
-    for (const [key] of DIMS) {
-      const r = rows[key], v = state.dims[key];
-      const txt = LIMITS[key][3] < 1 ? v.toFixed(1) : String(Math.round(v));
-      if (r.num.textContent !== txt) { r.num.textContent = txt; bump(r.num); }
-      r.minus.disabled = v <= r.min + 1e-6;
-      r.plus.disabled = v >= r.max - 1e-6;
-    }
+    for (const [key] of DIMS) rows[key]();
     document.querySelectorAll('[data-preset]').forEach(b => {
       const p = PRESETS[b.dataset.preset];
       b.classList.toggle('on', Object.keys(p).every(k => Math.abs(p[k] - state.dims[k]) < .01));
@@ -159,11 +172,188 @@ export function createUI(app) {
     b.onclick = () => { app.setMaterial(m.id); syncMat(); };
     mat.appendChild(b);
   });
-  const syncMat = () => document.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.mat === state.material));
+  const syncMat = () => document.querySelectorAll('#materials .sw').forEach(b => b.classList.toggle('on', b.dataset.mat === state.material));
   document.querySelectorAll('[data-lid]').forEach(b => b.onclick = () => app.lid(b.dataset.lid));
 
+  // ------------------------------------------------- biblioteca de objetos
+  const TOOLS = [
+    { id: '__tira', name: 'Tira de luces', emoji: '💡', cat: 'luces', tool: 'tira' },
+    { id: '__foto', name: 'Foto', emoji: '🖼️', cat: 'fotos', tool: 'foto' },
+    { id: '__forro', name: 'Forrar cartón', emoji: '🎨', cat: 'materiales', tool: 'forro' },
+  ];
+  let libCat = 'amor';
+  const libGrid = $('#libGrid'), libCats = $('#libCats');
+  CATEGORIES.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.dataset.cat = c.id;
+    b.innerHTML = `<span class="em">${c.emoji}</span>${c.name}`;
+    b.onclick = () => { libCat = c.id; fillLib(); };
+    libCats.appendChild(b);
+  });
+
+  function fillLib() {
+    libCats.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.cat === libCat));
+    libGrid.innerHTML = '';
+    const items = [...CATALOG_LIST.filter(i => i.cat === libCat), ...TOOLS.filter(t => t.cat === libCat)];
+    items.forEach((it, i) => {
+      const b = document.createElement('button');
+      b.className = 'lib-item';
+      b.style.animation = `btnIn .4s var(--spring) both ${i * .03}s`;
+      b.innerHTML = `<em>${it.emoji}</em><span>${it.name}</span>`;
+      b.onclick = () => { open(null); it.tool ? app.tool(it.tool) : app.addObject(it.id); };
+      libGrid.appendChild(b);
+    });
+  }
+  fillLib();
+
+  // ------------------------------------------------- ajustes del objeto
+  const objColors = $('#objColors'), objParams = $('#objParams');
+  PALETTE.forEach(hex => {
+    const b = document.createElement('button');
+    b.className = 'sw'; b.style.background = hex; b.dataset.col = hex; b.dataset.mute = '1';
+    b.onclick = () => { app.objColor(hex); syncObj(); };
+    objColors.appendChild(b);
+  });
+  const modeChips = $('#modeChips');
+  MODES.forEach(m => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.dataset.mode = m; b.textContent = MODE_NAME[m];
+    b.onclick = () => { app.setSwitchMode(m); syncObj(); };
+    modeChips.appendChild(b);
+  });
+  $('#btnLink').onclick = () => app.startLink();
+  $('#objCenter').onclick = () => { app.centerObject(); syncObj(); };
+  $('#objFloor').onclick = () => { app.floorObject(); syncObj(); };
+
+  let paramRefresh = [];
+  function buildParams(o) {
+    objParams.innerHTML = '';
+    paramRefresh = [];
+    if (!o) return;
+    const def = CATALOG[o.type] || {};
+    const add = c => paramRefresh.push(stepRow(objParams, c));
+    if (o.type !== 'tira') {
+      add({ label: 'Tamaño', hint: 'escala del objeto', min: .3, max: 3, step: .1, unit: '×',
+        get: () => o.scale ?? 1, set: v => app.objSet('scale', v) });
+      add({ label: 'Giro', hint: 'grados', min: -180, max: 180, step: 15, unit: '°',
+        get: () => Math.round((o.rot || 0) * 180 / Math.PI), set: v => app.objSet('rot', v * Math.PI / 180) });
+      add({ label: 'Altura', hint: 'desde el fondo', min: 0, max: 60, step: .5,
+        get: () => o.y, set: v => app.objSet('y', v) });
+    }
+    if (def.params) {
+      add({ label: 'Ancho', hint: 'del papel', min: .4, max: 6, step: .2, get: () => o.pw ?? 1.6, set: v => app.objSet('pw', v) });
+      add({ label: 'Largo', hint: 'de la tira', min: 2, max: 18, step: .5, get: () => o.ph ?? 6, set: v => app.objSet('ph', v) });
+      add({ label: 'Grosor', hint: 'del papel', min: .04, max: 1, step: .04, get: () => o.pt ?? .12, set: v => app.objSet('pt', v) });
+    }
+    if (o.type === 'tira') {
+      add({ label: 'Grosor', hint: 'del cable y las luces', min: .2, max: 1.6, step: .1,
+        get: () => o.thick ?? .5, set: v => app.objSet('thick', v) });
+    }
+  }
+
+  function syncObj() {
+    const o = app.selectedObject();
+    const on = !!o;
+    el.dockObject.hidden = !on;
+    el.zbar.hidden = !on || o.type === 'tira';
+    $('#objSwitch').hidden = !on || !CATALOG[o?.type]?.switch;
+    $('#obLock').classList.toggle('on', !!o?.locked);
+    if (!on) return;
+    $('#objTitle').textContent = (CATALOG[o.type]?.name) || 'Tira de luces';
+    objColors.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.col === o.color));
+    modeChips.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.mode === (o.mode || 'off')));
+    const links = (state.links[o.id] || []).length;
+    $('#linkInfo').textContent = links ? `Controla ${links} tira${links > 1 ? 's' : ''} de luces.` : 'Sin tiras conectadas todavía.';
+    paramRefresh.forEach(f => f());
+    syncZ();
+  }
+
+  /** El objeto de la hoja se reconstruye al cambiar de selección. */
+  let lastObjId = null;
+  function ensureObjSheet() {
+    const o = app.selectedObject();
+    if ((o?.id || null) === lastObjId) return;
+    lastObjId = o?.id || null;
+    buildParams(o);
+  }
+
+  // ------------------------------------------------- altura (eje Y)
+  const zTrack = $('#zTrack'), zFill = $('#zFill'), zVal = $('#zVal');
+  const zMax = () => Math.max(8, state.dims.alto * 1.4);
+  function syncZ() {
+    const o = app.selectedObject();
+    if (!o || o.type === 'tira') return;
+    const f = Math.max(0, Math.min(1, o.y / zMax()));
+    zFill.style.height = (f * 100) + '%';
+    zVal.textContent = o.y.toFixed(1);
+  }
+  const zSet = v => { app.objSet('y', +v.toFixed(2)); syncZ(); };
+  hold($('#zUp'), () => { const o = app.selectedObject(); if (o) { zSet(o.y + .5); audio.play('tick'); } });
+  hold($('#zDown'), () => { const o = app.selectedObject(); if (o) { zSet(o.y - .5); audio.play('tick'); } });
+  {
+    let id = null;
+    const move = e => {
+      const r = zTrack.getBoundingClientRect();
+      const f = Math.max(0, Math.min(1, (r.bottom - e.clientY) / r.height));
+      zSet(f * zMax());
+    };
+    zTrack.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      id = e.pointerId; zTrack.setPointerCapture(id); move(e); audio.play('grab');
+    });
+    zTrack.addEventListener('pointermove', e => { if (id === e.pointerId) move(e); });
+    const end = e => { if (id === e.pointerId) { id = null; app.commit(); } };
+    zTrack.addEventListener('pointerup', end);
+    zTrack.addEventListener('pointercancel', end);
+  }
+
+  // ------------------------------------------------- forrar cartón
+  const forroColors = $('#forroColors'), forroFinish = $('#forroFinish');
+  ['#ffffff', ...PALETTE.slice(1)].forEach(hex => {
+    const b = document.createElement('button');
+    b.className = 'sw'; b.style.background = hex; b.dataset.lin = hex; b.dataset.mute = '1';
+    b.onclick = () => { app.setLining({ color: hex }); syncForro(); };
+    forroColors.appendChild(b);
+  });
+  FINISHES.forEach(f => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.dataset.fin = f.id; b.textContent = f.name;
+    b.onclick = () => { app.setLining({ finish: f.id }); syncForro(); };
+    forroFinish.appendChild(b);
+  });
+  $('#forroAll').onclick = () => { app.liningAll(); syncForro(); };
+  $('#forroClear').onclick = () => { app.clearLining(); syncForro(); };
+
+  function syncForro() {
+    const cur = app.currentLining();
+    $('#forroFace').textContent = cur.name
+      ? `Forrando: ${cur.name}` : 'Toca una parte de la caja para elegirla.';
+    forroColors.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.lin === cur.color));
+    forroFinish.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.fin === cur.finish));
+  }
+
+  // ------------------------------------------------- barra de acción flotante
+  let barOk = null, barCancel = null;
+  $('#drawDone').onclick = () => barOk?.();
+  $('#drawCancel').onclick = () => barCancel?.();
+  function bar(info, ok, cancel) {
+    barOk = ok; barCancel = cancel;
+    el.drawbar.hidden = !info;
+    if (!info) return;
+    el.drawbar.querySelector('b').textContent = info.title;
+    $('#drawHint').textContent = info.hint || '';
+    $('#drawDone').lastChild.textContent = info.ok || 'Listo';
+    sync();
+  }
+
+  // ------------------------------------------------- dock del objeto
+  $('#obRot').onclick = () => app.objSet('rot', (app.selectedObject()?.rot || 0) + Math.PI / 8);
+  $('#obCopy').onclick = () => app.duplicateObject();
+  $('#obLock').onclick = () => app.lockObject();
+  $('#obDel').onclick = () => app.removeObject();
+  $('#obDone').onclick = () => app.selectObject(null);
+
   // ---------------------------------------------------------------- acciones
-  $('#btnAdd').onclick = () => el.file.click();
   el.file.onchange = () => {
     const f = el.file.files[0];
     if (!f) return;
@@ -190,7 +380,7 @@ export function createUI(app) {
   el.lock.onclick = () => { state.lockAspect = !state.lockAspect; sync(); };
 
   for (const [id, key] of [['#optSpin', 'spin'], ['#optShadow', 'shadow'], ['#optHQ', 'hq'],
-    ['#optSound', 'sound'], ['#optBuzz', 'buzz']]) {
+    ['#optXray', 'xray'], ['#optSound', 'sound'], ['#optBuzz', 'buzz']]) {
     const c = $(id); c.checked = state[key];
     c.onchange = () => { app.setOption(key, c.checked); audio.play('toggle'); };
   }
@@ -239,8 +429,15 @@ export function createUI(app) {
     el.undo.disabled = !canUndo();
     el.redo.disabled = !canRedo();
     const sel = !!state.selected;
-    document.body.classList.toggle('editing', sel);
-    el.dockMain.hidden = sel;
+    const obj = !!app.selectedObject();
+    ensureObjSheet();
+    syncObj();
+    syncForro();
+    const busy = !el.drawbar.hidden;
+    document.body.classList.toggle('editing', sel || obj);
+    el.dockMain.hidden = sel || obj || busy;
+    el.dockObject.hidden = !obj || busy;
+    el.zbar.hidden = el.dockObject.hidden || app.selectedObject()?.type === 'tira';
     el.dockSt.hidden = !sel;
     el.lock.hidden = !sel;
     el.lock.classList.toggle('on', state.lockAspect);
@@ -276,5 +473,5 @@ export function createUI(app) {
   }
 
   syncDims(); syncMat(); sync();
-  return { sync, syncDims, syncMat, toast, loading, preview, open, placing };
+  return { sync, syncDims, syncMat, toast, loading, preview, open, placing, bar };
 }

@@ -71,6 +71,47 @@ export function shadowCanvas() {
   return c;
 }
 
+/** Acabados disponibles al forrar el cartón. */
+export const FINISHES = [
+  { id: 'papel', name: 'Papel', gloss: .06 },
+  { id: 'cartulina', name: 'Cartulina', gloss: .16 },
+  { id: 'tela', name: 'Tela', gloss: .03 },
+  { id: 'brillante', name: 'Brillante', gloss: .8 },
+  { id: 'mate', name: 'Mate', gloss: 0 },
+];
+export const finishOf = id => FINISHES.find(f => f.id === id) || FINISHES[0];
+
+/** Textura del forro: color liso con la trama del acabado elegido. */
+export function liningCanvas(color, finish) {
+  const key = `_lin${color}${finish}`;
+  if (cache.has(key)) return cache.get(key);
+  const N = 256, c = Object.assign(document.createElement('canvas'), { width: N, height: N });
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color; ctx.fillRect(0, 0, N, N);
+
+  if (finish === 'tela') {                       // trama tejida muy fina
+    ctx.globalAlpha = .05;
+    for (let i = 0; i < N; i += 6) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(i, 0, 3, N);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, i + 3, N, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+  const img = ctx.getImageData(0, 0, N, N), d = img.data;
+  const grain = { papel: 9, cartulina: 5, tela: 7, brillante: 2, mate: 6 }[finish] ?? 6;
+  const blot = valueNoise(N, finish === 'papel' ? 10 : 20);
+  for (let p = 0; p < N * N; p++) {
+    const i = p * 4;
+    const n = (Math.random() - .5) * grain * 1.4 + (blot[p] - .5) * grain * .9;
+    d[i] = clamp255(d[i] + n); d[i + 1] = clamp255(d[i + 1] + n); d[i + 2] = clamp255(d[i + 2] + n * .9);
+  }
+  ctx.putImageData(img, 0, 0);
+  cache.set(key, c);
+  return c;
+}
+
 /** Marco de superficie: borde marcado + velo tenue (para resaltar la cara activa). */
 export function frameCanvas(color) {
   const key = '_frame' + color;
@@ -91,14 +132,15 @@ export function frameCanvas(color) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {{w:number,h:number,uLen:number}} face  tamaño del canvas y ancho real en cm
  */
-export function paintFace(ctx, face, stickers, materialId) {
+export function paintFace(ctx, face, stickers, skin) {
   const { w, h, uLen } = face;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
   const px = w / uLen;                       // píxeles por cm
   const k = (px * TILE) / 256;
-  const pat = ctx.createPattern(kraftCanvas(materialId), 'repeat');
+  const base = skin.lining ? liningCanvas(skin.lining.color, skin.lining.finish) : kraftCanvas(skin.material);
+  const pat = ctx.createPattern(base, 'repeat');
   pat.setTransform?.(new DOMMatrix([k, 0, 0, k, 0, 0]));
   ctx.fillStyle = pat;
   ctx.fillRect(0, 0, w, h);

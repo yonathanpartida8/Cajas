@@ -20,6 +20,9 @@ export function addImage(src) {
 
 const defaults = () => Object.fromEntries(Object.keys(LIMITS).map(k => [k, LIMITS[k][2]]));
 
+let objSeq = 0;
+export const newObject = o => ({ id: 'o' + (++objSeq), x: 0, y: 0, z: 0, rot: 0, scale: 1, ...o });
+
 export const state = {
   dims: defaults(),            // largo, ancho, alto, tapa, grosor (cm)
   material: 'kraft',
@@ -31,17 +34,31 @@ export const state = {
   placing: null,               // {id} imagen pendiente de colocar
   lidPicked: false,            // tapa lista para moverse con el dedo
   lockAspect: true,
-  spin: false, shadow: true, hq: true, sound: true, buzz: true,
+
+  objects: [],                 // objetos 3D dentro de la caja
+  links: {},                   // interruptor → [tiras que controla]
+  lining: {},                  // cara → {color, finish} del forro
+  object: null,                // objeto 3D seleccionado
+  placingObj: null,            // objeto pendiente de colocar
+  drawing: null,               // tira de luces que se está dibujando
+  linking: null,               // interruptor en modo "conectar"
+  lineTool: null,              // herramienta activa (forrar, tira…)
+  spin: false, shadow: true, hq: true, sound: true, buzz: true, xray: false,
 };
 
 export const newSticker = o => ({ id: 's' + (++stSeq), u: .5, v: .5, size: .5, ratio: 1, rot: 0, ...o });
 export const getSticker = id => state.stickers.find(s => s.id === id) || null;
+export const getObject = id => state.objects.find(o => o.id === id) || null;
+export const realObjects = () => state.objects.filter(o => !o.ghost);
 export const stickersOf = faceId => state.stickers.filter(s => s.face === faceId);
 export const realStickers = () => state.stickers.filter(s => !s.ghost);
 
 // ---------- historial ----------
 const past = [], future = [];
-const snap = () => JSON.stringify({ d: state.dims, m: state.material, l: state.lid, s: realStickers() });
+const snap = () => JSON.stringify({
+  d: state.dims, m: state.material, l: state.lid, s: realStickers(),
+  o: realObjects(), k: state.links, f: state.lining,
+});
 let last = snap();
 
 /** Guarda el estado actual como punto de retorno. */
@@ -60,8 +77,12 @@ function apply(str) {
   Object.assign(state.lid, o.l);
   state.material = o.m;
   state.stickers = o.s;
-  state.placing = null; state.hover = null;
+  state.objects = o.o || [];
+  state.links = o.k || {};
+  state.lining = o.f || {};
+  state.placing = null; state.hover = null; state.placingObj = null; state.drawing = null;
   if (!getSticker(state.selected)) state.selected = null;
+  if (!getObject(state.object)) state.object = null;
   last = str;
   emit('restore');
 }
@@ -76,7 +97,9 @@ export function resetAll() {
   state.material = 'kraft';
   state.lid = { x: 0, y: 0, z: 0 };
   state.stickers = [];
+  state.objects = []; state.links = {}; state.lining = {};
   state.selected = state.face = state.hover = state.placing = null;
+  state.object = state.placingObj = state.drawing = state.linking = state.lineTool = null;
   state.lidPicked = false;
   commit();
   emit('restore');

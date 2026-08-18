@@ -23,6 +23,7 @@
 <div class="glow" aria-hidden="true"></div>
 <div class="vignette" aria-hidden="true"></div>
 <div class="fx" id="fx" aria-hidden="true"></div>
+<svg class="links" id="linksSvg" aria-hidden="true"></svg>
 
 <!-- marco y manijas de la imagen seleccionada -->
 <div class="ov" id="ov" hidden>
@@ -61,7 +62,7 @@
 
 <nav class="dock" id="dockMain">
   <button class="dbtn" data-sheet="box"><i class="ic ic-box"></i><span>Caja</span></button>
-  <button class="dbtn" id="btnAdd"><i class="ic ic-image"></i><span>Imagen</span></button>
+  <button class="dbtn" data-sheet="lib"><i class="ic ic-plus-box"></i><span>Añadir</span></button>
   <button class="dbtn" data-sheet="size"><i class="ic ic-ruler"></i><span>Medidas</span></button>
   <button class="dbtn" data-sheet="settings"><i class="ic ic-gear"></i><span>Ajustes</span></button>
 </nav>
@@ -75,7 +76,74 @@
   <button class="dbtn ok" id="stDone"><i class="ic ic-check"></i><span>Listo</span></button>
 </nav>
 
+<nav class="dock dock-alt" id="dockObject" hidden>
+  <button class="dbtn" data-sheet="obj"><i class="ic ic-palette"></i><span>Ajustes</span></button>
+  <button class="dbtn" id="obRot"><i class="ic ic-rotate"></i><span>Girar</span></button>
+  <button class="dbtn" id="obCopy"><i class="ic ic-copy"></i><span>Copiar</span></button>
+  <button class="dbtn" id="obLock"><i class="ic ic-lock"></i><span>Fijar</span></button>
+  <button class="dbtn danger" data-mute id="obDel"><i class="ic ic-trash"></i><span>Borrar</span></button>
+  <button class="dbtn ok" id="obDone"><i class="ic ic-check"></i><span>Listo</span></button>
+</nav>
+
+<!-- altura del objeto (eje Y) -->
+<div class="zbar" id="zbar" hidden>
+  <button class="zbtn" id="zUp" aria-label="Subir"><i class="ic ic-plus"></i></button>
+  <div class="ztrack" id="zTrack"><span id="zFill"></span><b id="zVal">0</b></div>
+  <button class="zbtn" id="zDown" aria-label="Bajar"><i class="ic ic-minus"></i></button>
+</div>
+
+<!-- barra de dibujo de la tira de luces -->
+<div class="drawbar" id="drawbar" hidden>
+  <div class="drawbar-txt">
+    <b>Dibuja la tira con el dedo</b>
+    <span id="drawHint">recorre el interior de la caja</span>
+  </div>
+  <div class="row">
+    <button class="chip-btn" id="drawDone"><i class="ic ic-check"></i>Listo</button>
+    <button class="chip-btn icon-only" data-mute id="drawCancel" aria-label="Cancelar"><i class="ic ic-close"></i></button>
+  </div>
+</div>
+
 <div class="scrim" id="scrim"></div>
+
+<section class="sheet" id="sheet-lib" hidden>
+  <div class="grab"></div>
+  <h2>Añadir a la caja</h2>
+  <div class="chips scroll" id="libCats"></div>
+  <div class="lib" id="libGrid"></div>
+</section>
+
+<section class="sheet" id="sheet-obj" hidden>
+  <div class="grab"></div>
+  <h2 id="objTitle">Objeto</h2>
+  <h3>Color</h3>
+  <div class="swatches wrap" id="objColors"></div>
+  <div id="objParams"></div>
+  <div class="grid2">
+    <button class="wide soft" id="objCenter"><i class="ic ic-center"></i>Centrar</button>
+    <button class="wide soft" id="objFloor"><i class="ic ic-lid-place"></i>Al fondo</button>
+  </div>
+  <div id="objSwitch" hidden>
+    <h3>Interruptor</h3>
+    <div class="chips" id="modeChips"></div>
+    <button class="wide soft" id="btnLink"><i class="ic ic-link"></i>Conectar con una tira</button>
+    <p class="tip" id="linkInfo"></p>
+  </div>
+</section>
+
+<section class="sheet" id="sheet-forro" hidden>
+  <div class="grab"></div>
+  <h2>Forrar cartón</h2>
+  <p class="tip left" id="forroFace">Toca una parte de la caja para elegirla.</p>
+  <h3>Color</h3>
+  <div class="swatches wrap" id="forroColors"></div>
+  <h3>Acabado</h3>
+  <div class="chips scroll" id="forroFinish"></div>
+  <div class="grid2">
+    <button class="wide soft" id="forroAll"><i class="ic ic-box"></i>Toda la caja</button>
+    <button class="wide soft" id="forroClear"><i class="ic ic-undo"></i>Quitar forro</button>
+  </div>
+</section>
 
 <section class="sheet" id="sheet-box" hidden>
   <div class="grab"></div>
@@ -107,6 +175,7 @@
   <h2>Ajustes</h2>
   <label class="opt"><span><i class="ic ic-rotate"></i>Giro automático</span><input type="checkbox" data-mute id="optSpin"></label>
   <label class="opt"><span><i class="ic ic-shadow"></i>Sombra</span><input type="checkbox" data-mute id="optShadow" checked></label>
+  <label class="opt"><span><i class="ic ic-xray"></i>Ver el interior</span><input type="checkbox" data-mute id="optXray"></label>
   <label class="opt"><span><i class="ic ic-hd"></i>Alta calidad</span><input type="checkbox" data-mute id="optHQ" checked></label>
   <label class="opt"><span><i class="ic ic-sound"></i>Sonido</span><input type="checkbox" data-mute id="optSound" checked></label>
   <label class="opt"><span><i class="ic ic-buzz"></i>Vibración</span><input type="checkbox" data-mute id="optBuzz" checked></label>
