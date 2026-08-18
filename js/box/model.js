@@ -2,14 +2,15 @@
 import { v3, norm, cross } from '../core/math3d.js';
 
 export const S = 0.045;      // cm → unidades de mundo
-export const THICK = 0.4;    // grosor del cartón (cm)
 export const GAP = 0.15;     // holgura entre caja y tapa (cm)
 
+/** medida: [mínimo, máximo, valor inicial, paso] en cm */
 export const LIMITS = {
-  largo: [8, 60, 24],
-  ancho: [8, 60, 18],
-  alto: [4, 45, 14],
-  tapa: [2, 20, 5],
+  largo: [8, 60, 24, 1],
+  ancho: [8, 60, 18, 1],
+  alto: [4, 45, 14, 1],
+  tapa: [2, 20, 5, 1],
+  grosor: [.2, 1.5, .4, .1],
 };
 
 /** Crea una cara. Entradas en cm; salida en unidades de mundo. */
@@ -62,7 +63,7 @@ function rim(prefix, part, y, ax, az, ix, iz, dir, out) {
  * @param {{x:number,y:number,z:number}} lid  desplazamiento de la tapa (cm)
  */
 export function buildFaces(d, lid = { x: 0, y: 0, z: 0 }) {
-  const W = d.ancho, D = d.largo, H = d.alto, T = THICK;
+  const W = d.ancho, D = d.largo, H = d.alto, T = d.grosor;
   const ax = W / 2, az = D / 2, ix = ax - T, iz = az - T;
   const f = [];
 
@@ -99,8 +100,22 @@ export function faceLabel(face) {
   return NAMES[name] || 'la caja';
 }
 
+const SHORT = { front: 'Frente', back: 'Trasera', right: 'Lado der.', left: 'Lado izq.', bottom: 'Base', top: 'Tapa' };
+
+/** Etiqueta corta para el indicador de superficie. */
+export function faceShort(face) {
+  const [part, side, name] = face.id.split('.');
+  const zone = part === 'l' ? (side === 'i' ? 'Interior tapa' : name === 'top' ? 'Tapa' : 'Tapa · ' + SHORT[name]) : null;
+  if (zone) return zone;
+  if (side === 'i') return name === 'bottom' ? 'Fondo interior' : 'Interior · ' + SHORT[name];
+  return SHORT[name] || 'Caja';
+}
+
 /** Altura total del conjunto y diagonal aproximada (cm) — para encuadrar la cámara. */
 export function extent(d) {
-  const A = d.ancho / 2 + GAP + THICK, B = d.largo / 2 + GAP + THICK;
-  return Math.hypot(A * 2, d.alto + THICK, B * 2);
+  const A = d.ancho / 2 + GAP + d.grosor, B = d.largo / 2 + GAP + d.grosor;
+  return Math.hypot(A * 2, d.alto + d.grosor, B * 2);
 }
+
+/** Semiancho exterior de la tapa (cm) — usado para apartarla. */
+export const lidHalf = d => d.ancho / 2 + GAP + d.grosor;

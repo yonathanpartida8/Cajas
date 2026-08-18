@@ -18,23 +18,30 @@ export function addImage(src) {
   });
 }
 
+const defaults = () => Object.fromEntries(Object.keys(LIMITS).map(k => [k, LIMITS[k][2]]));
+
 export const state = {
-  dims: { largo: LIMITS.largo[2], ancho: LIMITS.ancho[2], alto: LIMITS.alto[2], tapa: LIMITS.tapa[2] },
+  dims: defaults(),            // largo, ancho, alto, tapa, grosor (cm)
   material: 'kraft',
   lid: { x: 0, y: 0, z: 0 },   // desplazamiento objetivo de la tapa (cm)
-  stickers: [],                // {id, face, u, v, size, rot, imgId}
-  selected: null,              // id de imagen seleccionada
-  lidPicked: false,            // tapa seleccionada para moverla
+  stickers: [],                // {id, face, u, v, size, ratio, rot, imgId, ghost?}
+  selected: null,              // imagen seleccionada
+  face: null,                  // superficie seleccionada (id de cara)
+  hover: null,                 // superficie bajo el dedo mientras se coloca/arrastra
+  placing: null,               // {id} imagen pendiente de colocar
+  lidPicked: false,            // tapa lista para moverse con el dedo
+  lockAspect: true,
   spin: false, shadow: true, hq: true,
 };
 
-export const newSticker = o => ({ id: 's' + (++stSeq), u: .5, v: .5, size: .55, rot: 0, ...o });
+export const newSticker = o => ({ id: 's' + (++stSeq), u: .5, v: .5, size: .5, ratio: 1, rot: 0, ...o });
 export const getSticker = id => state.stickers.find(s => s.id === id) || null;
 export const stickersOf = faceId => state.stickers.filter(s => s.face === faceId);
+export const realStickers = () => state.stickers.filter(s => !s.ghost);
 
 // ---------- historial ----------
 const past = [], future = [];
-const snap = () => JSON.stringify({ d: state.dims, m: state.material, l: state.lid, s: state.stickers });
+const snap = () => JSON.stringify({ d: state.dims, m: state.material, l: state.lid, s: realStickers() });
 let last = snap();
 
 /** Guarda el estado actual como punto de retorno. */
@@ -53,6 +60,7 @@ function apply(str) {
   Object.assign(state.lid, o.l);
   state.material = o.m;
   state.stickers = o.s;
+  state.placing = null; state.hover = null;
   if (!getSticker(state.selected)) state.selected = null;
   last = str;
   emit('restore');
@@ -64,11 +72,12 @@ export const canUndo = () => past.length > 0;
 export const canRedo = () => future.length > 0;
 
 export function resetAll() {
-  state.dims = { largo: LIMITS.largo[2], ancho: LIMITS.ancho[2], alto: LIMITS.alto[2], tapa: LIMITS.tapa[2] };
+  state.dims = defaults();
   state.material = 'kraft';
   state.lid = { x: 0, y: 0, z: 0 };
   state.stickers = [];
-  state.selected = null; state.lidPicked = false;
+  state.selected = state.face = state.hover = state.placing = null;
+  state.lidPicked = false;
   commit();
   emit('restore');
 }

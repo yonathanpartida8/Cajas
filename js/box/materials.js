@@ -71,12 +71,27 @@ export function shadowCanvas() {
   return c;
 }
 
+/** Marco de superficie: borde marcado + velo tenue (para resaltar la cara activa). */
+export function frameCanvas(color) {
+  const key = '_frame' + color;
+  if (cache.has(key)) return cache.get(key);
+  const N = 256, c = Object.assign(document.createElement('canvas'), { width: N, height: N });
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color; ctx.globalAlpha = .16;
+  ctx.fillRect(0, 0, N, N);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color; ctx.lineWidth = 10; ctx.lineJoin = 'round';
+  ctx.strokeRect(6, 6, N - 12, N - 12);
+  cache.set(key, c);
+  return c;
+}
+
 /**
  * Pinta una cara: fondo de cartón + imágenes con su transformación.
  * @param {CanvasRenderingContext2D} ctx
  * @param {{w:number,h:number,uLen:number}} face  tamaño del canvas y ancho real en cm
  */
-export function paintFace(ctx, face, stickers, selectedId, materialId) {
+export function paintFace(ctx, face, stickers, materialId) {
   const { w, h, uLen } = face;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
@@ -92,25 +107,12 @@ export function paintFace(ctx, face, stickers, selectedId, materialId) {
     const img = s.img;
     if (!img || !img.width) continue;
     const dw = s.size * w;
-    const dh = dw * (img.height / img.width);
+    const dh = dw * (img.height / img.width) * (s.ratio ?? 1);
     ctx.save();
     ctx.translate(s.u * w, s.v * h);
     ctx.rotate(s.rot);
-    ctx.globalAlpha = s.alpha ?? 1;
+    ctx.globalAlpha = s.ghost ? .55 : 1;
     ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
-    ctx.globalAlpha = 1;
-    if (s.id === selectedId) {
-      const p = Math.max(4, w * .006);
-      ctx.strokeStyle = '#d98232'; ctx.lineWidth = p; ctx.setLineDash([p * 3, p * 2.4]);
-      ctx.strokeRect(-dw / 2 - p, -dh / 2 - p, dw + p * 2, dh + p * 2);
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#d98232';
-      for (const [cx, cy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-        ctx.beginPath();
-        ctx.arc(cx * (dw / 2 + p), cy * (dh / 2 + p), p * 1.8, 0, 7);
-        ctx.fill();
-      }
-    }
     ctx.restore();
   }
 }

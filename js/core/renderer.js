@@ -110,8 +110,17 @@ export function createRenderer(canvas) {
     const right = norm(cross(fwd, v3(0, 1, 0)));
     const up = cross(right, fwd);
     const th = Math.tan(fov / 2);
+    const vp = mul(proj, view);
     return {
-      vp: mul(proj, view), eye, fwd, right, up,
+      vp, eye, fwd, right, up,
+      /** Punto 3D → píxeles CSS del lienzo; null si queda detrás de la cámara. */
+      project(p) {
+        const w = vp[3] * p.x + vp[7] * p.y + vp[11] * p.z + vp[15];
+        if (w <= 1e-4) return null;
+        const x = (vp[0] * p.x + vp[4] * p.y + vp[8] * p.z + vp[12]) / w;
+        const y = (vp[1] * p.x + vp[5] * p.y + vp[9] * p.z + vp[13]) / w;
+        return { x: (x * .5 + .5) * canvas.clientWidth, y: (.5 - y * .5) * canvas.clientHeight };
+      },
       ray(nx, ny) {
         return norm(v3(
           fwd.x + right.x * nx * aspect * th + up.x * ny * th,

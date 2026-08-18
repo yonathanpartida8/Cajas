@@ -1,22 +1,24 @@
 // Escena: anima medidas/tapa, mantiene texturas por cara y resuelve el picking.
-import { buildFaces, extent, S } from '../box/model.js';
-import { paintFace, kraftCanvas, shadowCanvas, MATERIALS, TILE } from '../box/materials.js';
+import { buildFaces, S } from '../box/model.js';
+import { paintFace, kraftCanvas, shadowCanvas, frameCanvas, MATERIALS, TILE } from '../box/materials.js';
 import { state, images, stickersOf, on } from './store.js';
-import { rayQuad, damp, v3, add, scale } from '../core/math3d.js';
+import { rayQuad, damp, v3, add, scale, norm } from '../core/math3d.js';
 
 const MAXPX = 640;
+const ACCENT = '#d98232', OK = '#4f9d5d';
 
 export function createScene(renderer) {
   const anim = { ...state.dims, lx: 0, ly: 0, lz: 0 };
   const panels = new Map();          // faceId → {canvas,ctx,tex,w,h}
   const krafts = new Map();          // material → textura repetida
+  const frames = new Map();          // color → textura de marco
   const dirty = new Set();
   let faces = buildFaces(anim, { x: 0, y: 0, z: 0 });
   let shadowTex = null;
 
-  const kraftTex = id => {
-    if (!krafts.has(id)) krafts.set(id, renderer.texture(kraftCanvas(id), { repeat: true }));
-    return krafts.get(id);
+  const cached = (map, key, make, opts) => {
+    if (!map.has(key)) map.set(key, renderer.texture(make(key), opts));
+    return map.get(key);
   };
 
   const markAll = () => faces.forEach(f => dirty.add(f.id));
@@ -42,15 +44,14 @@ export function createScene(renderer) {
   function repaint(f, fast) {
     const p = panel(f);
     const list = stickersOf(f.id).map(s => ({ ...s, img: images.get(s.imgId) }));
-    paintFace(p.ctx, { w: p.w, h: p.h, uLen: f.uLen }, list, state.selected, state.material);
+    paintFace(p.ctx, { w: p.w, h: p.h, uLen: f.uLen }, list, state.material);
     p.tex = p.tex ? p.tex.update(p.canvas, fast) : renderer.texture(p.canvas);
     return p;
   }
 
   /** Interpola medidas y tapa; reconstruye la geometría. */
   function update(dt, dragging) {
-    const k = 11;
-    for (const key of ['largo', 'ancho', 'alto', 'tapa']) anim[key] = damp(anim[key], state.dims[key], k, dt);
+    for (const key of ['largo', 'ancho', 'alto', 'tapa', 'grosor']) anim[key] = damp(anim[key], state.dims[key], 11, dt);
     const speed = dragging ? 60 : 9;
     anim.lx = damp(anim.lx, state.lid.x, speed, dt);
     anim.ly = damp(anim.ly, state.lid.y, speed, dt);
@@ -59,9 +60,20 @@ export function createScene(renderer) {
     return faces;
   }
 
+  /** Marco resaltado sobre una cara, ligeramente separado de la superficie. */
+  function highlight(list, faceId, color) {
+    const f = faces.find(x => x.id === faceId);
+    if (!f) return;
+    const e = .0035, o = v3(f.o.x + f.n.x * e, f.o.y + f.n.y * e, f.o.z + f.n.z * e);
+    list.push({
+      o, u: f.u, v: f.v, n: f.n,
+      tex: cached(frames, color, frameCanvas), uvScale: [1, 1],
+      unlit: true, noDepth: true, alpha: 1,
+    });
+  }
+
   function draw(cam, fast) {
     const list = [];
-    const tint = [1, 1, 1];
     for (const f of faces) {
       const has = !f.plain && stickersOf(f.id).length > 0;
       let tex, uvScale;
@@ -70,14 +82,15 @@ export function createScene(renderer) {
         if (dirty.has(f.id) || !p.tex) { dirty.delete(f.id); repaint(f, fast); }
         tex = p.tex; uvScale = [1, 1];
       } else {
-        tex = kraftTex(state.material);
+        tex = cached(krafts, state.material, kraftCanvas, { repeat: true });
         uvScale = [f.uLen / TILE, f.vLen / TILE];
       }
       list.push({
-        ...f, tex, uvScale, tint,
-        hi: (state.lidPicked && f.part === 'lid') ? .55 : 0,
+        ...f, tex, uvScale,
+        hi: (state.lidPicked && f.part === 'lid') ? .5 : 0,
       });
     }
+
     if (state.shadow) {
       // sin mipmaps: en planos rasantes el degradado se aplanaría a un rectángulo
       if (!shadowTex) shadowTex = renderer.texture(shadowCanvas(), { mips: false });
@@ -87,6 +100,11 @@ export function createScene(renderer) {
         tex: shadowTex, uvScale: [1, 1], unlit: true, noDepth: true, alpha: .95,
       });
     }
+
+    // superficie bajo el dedo (verde = se soltará aquí) o superficie elegida
+    if (state.hover) highlight(list, state.hover, OK);
+    else if (state.face) highlight(list, state.face, ACCENT);
+
     renderer.render(list, cam);
   }
 
@@ -102,41 +120,57 @@ export function createScene(renderer) {
   }
 
   /** Imagen bajo un punto (u,v) de una cara; devuelve la de más arriba. */
-  function pickSticker(face, u, v) {
+  function pickSticker(face, u, v, pad = .12) {
     const list = stickersOf(face.id);
     for (let i = list.length - 1; i >= 0; i--) {
-      const s = list[i], img = images.get(s.imgId);
-      if (!img) continue;
+      const s = list[i];
+      const box = stickerBox(s, face);
+      if (!box) continue;
       const dx = (u - s.u) * face.uLen, dy = (v - s.v) * face.vLen;
       const c = Math.cos(-s.rot), si = Math.sin(-s.rot);
       const lx = dx * c - dy * si, ly = dx * si + dy * c;
-      const w = s.size * face.uLen, h = w * (img.height / img.width);
-      const m = Math.min(w, h) * .12;
-      if (Math.abs(lx) <= w / 2 + m && Math.abs(ly) <= h / 2 + m) return s;
+      const m = Math.min(box.w, box.h) * pad;
+      if (Math.abs(lx) <= box.w / 2 + m && Math.abs(ly) <= box.h / 2 + m) return s;
     }
     return null;
   }
 
-  /** Cara más orientada hacia la cámara (para colocar imágenes nuevas). */
-  function frontFace(cam) {
-    let best = null, bd = 0;
-    for (const f of faces) {
-      if (f.plain) continue;
-      const c = add(f.o, add(scale(f.u, .5), scale(f.v, .5)));
-      const dir = v3(c.x - cam.eye.x, c.y - cam.eye.y, c.z - cam.eye.z);
-      const l = Math.hypot(dir.x, dir.y, dir.z) || 1;
-      const d = -(dir.x * f.n.x + dir.y * f.n.y + dir.z * f.n.z) / l;
-      const area = f.uLen * f.vLen;
-      const score = d * Math.sqrt(area);
-      if (d > .15 && score > bd) { bd = score; best = f; }
-    }
-    return best;
+  /** Tamaño de una imagen sobre su cara, en cm. */
+  function stickerBox(s, face) {
+    const img = images.get(s.imgId);
+    if (!img || !img.width) return null;
+    const w = s.size * face.uLen;
+    return { w, h: w * (img.height / img.width) * (s.ratio ?? 1) };
+  }
+
+  /** Esquinas 3D de una imagen (para las manijas): [ne, se, so, no] + centro y eje de giro. */
+  function stickerFrame(s) {
+    const face = faces.find(f => f.id === s.face);
+    const box = face && stickerBox(s, face);
+    if (!box) return null;
+    const eu = norm(face.u), ev = norm(face.v);
+    const c = Math.cos(s.rot), si = Math.sin(s.rot);
+    const ax = v3(eu.x * c + ev.x * si, eu.y * c + ev.y * si, eu.z * c + ev.z * si);
+    const ay = v3(-eu.x * si + ev.x * c, -eu.y * si + ev.y * c, -eu.z * si + ev.z * c);
+    const center = add(face.o, add(scale(face.u, s.u), scale(face.v, s.v)));
+    const hw = box.w * S / 2, hh = box.h * S / 2;
+    const at = (sx, sy) => v3(
+      center.x + ax.x * sx * hw + ay.x * sy * hh,
+      center.y + ax.y * sx * hw + ay.y * sy * hh,
+      center.z + ax.z * sx * hw + ay.z * sy * hh,
+    );
+    return {
+      face, center, box,
+      corners: [at(-1, -1), at(1, -1), at(1, 1), at(-1, 1)],
+      spin: at(0, -1 - Math.min(1.2, 5 / Math.max(box.h, 2))),   // manija de giro sobre el borde superior
+      normal: face.n,
+    };
   }
 
   return {
     get faces() { return faces; },
     get anim() { return anim; },
-    update, draw, pick, pickSticker, frontFace,
+    update, draw, pick, pickSticker, stickerBox, stickerFrame,
     dirty: id => dirty.add(id),
     markAll,
     faceById: id => faces.find(f => f.id === id) || null,

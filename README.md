@@ -20,16 +20,33 @@ La interfaz está pensada **solo para pantallas táctiles**: Android e iPhone.
 
 | Gesto | Acción |
 |---|---|
-| Arrastrar sobre el fondo | Girar la caja |
-| Pellizcar | Acercar / alejar |
-| Tocar una imagen | Seleccionarla (aparecen sus controles) |
-| Arrastrar una imagen | Moverla sobre la superficie |
-| Tocar la tapa | Seleccionarla |
-| Arrastrar la tapa seleccionada | Levantarla, apartarla o volver a colocarla |
+| Arrastrar sobre el fondo o la caja | Girar la vista (con inercia suave) |
+| Pellizcar con dos dedos | Acercar / alejar |
+| Mover dos dedos juntos | Desplazar la vista sin tocar la caja |
+| Tocar una superficie | Seleccionarla (se resalta y se muestra su nombre) |
+| Tocar una imagen | Editarla: aparecen marco y manijas |
+| Arrastrar una imagen | Moverla; si el dedo pasa a otra superficie, se muda a ella |
+| Arrastrar una manija de esquina | Cambiar el tamaño (proporción bloqueable) |
+| Arrastrar la manija de giro | Rotarla |
+| Pellizcar sobre la imagen elegida | Escalar y girar a la vez |
+| Tocar la tapa → «Mover» | Habilita arrastrarla libremente |
 
-Las imágenes se pegan a la cara que estés mirando (interior o exterior, caja o tapa) y
-se quedan adheridas a ella al girar la caja, porque se pintan **dentro de la textura de
-esa cara**, no como planos flotantes.
+La cámara y la edición nunca se pisan: un dedo sobre una imagen la mueve, un dedo en
+cualquier otro sitio gira la vista, y la tapa solo se mueve si lo activas a propósito.
+
+### Colocar imágenes: sin adivinar
+
+Al elegir una foto **no se coloca sola en ninguna parte**. Aparece una tarjeta con la
+miniatura y hay dos formas de situarla, ambas decididas por ti:
+
+1. **Arrastrarla** desde la tarjeta hasta la caja. Mientras el dedo se mueve verás la
+   superficie de destino resaltada en verde, una vista previa translúcida de la imagen
+   sobre ella y el marco exacto que ocupará. Se coloca donde sueltas.
+2. **Tocar** directamente la superficie donde la quieres.
+
+Las imágenes se pintan **dentro de la textura de la cara**, no como planos flotantes:
+por eso quedan adheridas al girar la caja, y se recortan al límite de la superficie
+(nunca se salen ni saltan a otra cara por su cuenta).
 
 ## Estructura
 
@@ -47,9 +64,10 @@ js/
     materials.js      textura de cartón procedural y pintado de caras
   app/
     store.js          estado, historial (deshacer/rehacer) e imágenes
-    scene.js          animación, texturas por cara y picking
-    input.js          gestos táctiles
-    ui.js             dock, paneles y controles
+    scene.js          animación, texturas por cara, resaltados y picking
+    input.js          gestos táctiles (vista, imágenes, tapa)
+    overlay.js        marco y manijas de la imagen seleccionada
+    ui.js             dock, paneles, medidas y colocación
   features/
     removebg.js       eliminación de fondo local
 ```
@@ -62,8 +80,11 @@ js/
 * Cada cara sin imágenes comparte la textura de cartón (repetida). En cuanto recibe una
   imagen se le asigna un canvas propio donde se pinta el cartón + las imágenes con su
   posición, giro y escala. Por eso las imágenes siguen la superficie con exactitud.
-* El *picking* (tocar para seleccionar, arrastrar imágenes) usa intersección rayo-cara en
-  CPU: no hace falta un buffer de selección.
+* El *picking* (tocar para seleccionar, arrastrar imágenes, colocar) usa intersección
+  rayo-cara en CPU: no hace falta un buffer de selección.
+* Las manijas son elementos del DOM colocados proyectando las esquinas de la imagen a
+  pantalla, pero **transforman en el plano de la superficie** (rayo → cara), así que la
+  escala y el giro son exactos aunque la caja esté en perspectiva.
 * Se dibuja **solo cuando algo cambia**; en reposo la app no consume GPU.
 
 ### Eliminación de fondo
@@ -79,6 +100,8 @@ sin tocar nada más.
 * **Más tipos de caja** → añade un constructor de caras junto a `buildFaces()` en `box/model.js`.
   El resto de la aplicación solo necesita la lista de caras.
 * **Más materiales** → añade una entrada a `MATERIALS` en `box/materials.js` (aparece sola en el panel).
+* **Más medidas** → añade la clave a `LIMITS` en `box/model.js` y una fila a `DIMS` en `app/ui.js`;
+  el control «− valor +» con arrastre se genera solo.
 * **Más herramientas** → un botón en el dock de `index.html` y su acción en el objeto `app` de `main.js`.
 * **Guardar / exportar** → el diseño completo es serializable: `state.dims`, `state.material`,
   `state.lid` y `state.stickers` (más el `dataURL` de cada imagen del mapa `images`).

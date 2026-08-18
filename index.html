@@ -15,6 +15,12 @@
 <body>
 
 <canvas id="scene"></canvas>
+
+<!-- marco y manijas de la imagen seleccionada -->
+<div class="ov" id="ov" hidden>
+  <svg><line/><polygon/></svg>
+</div>
+
 <div id="hint" class="hint">Arrastra para girar · Pellizca para acercar</div>
 
 <header class="topbar" id="topbar">
@@ -22,26 +28,40 @@
   <div class="row">
     <button class="ibtn" id="btnUndo" aria-label="Deshacer" disabled><i class="ic ic-undo"></i></button>
     <button class="ibtn" id="btnRedo" aria-label="Rehacer" disabled><i class="ic ic-redo"></i></button>
+    <button class="ibtn" id="btnHome" aria-label="Centrar vista"><i class="ic ic-target"></i></button>
     <button class="ibtn" id="btnPreview" aria-label="Vista previa"><i class="ic ic-eye"></i></button>
   </div>
 </header>
 
-<!-- Controles de la imagen seleccionada -->
-<div class="pad" id="pad" hidden>
-  <button class="pad-btn" id="padRot" aria-label="Rotar imagen"><i class="ic ic-rotate"></i><b>Rotar</b></button>
-  <button class="pad-btn" id="padScale" aria-label="Escalar imagen"><i class="ic ic-scale"></i><b>Tamaño</b></button>
+<!-- superficie activa -->
+<div class="surface" id="surface" hidden>
+  <i class="ic ic-surface"></i>
+  <b id="surfaceName">Tapa</b>
+  <button id="surfaceMove" class="chip-btn" hidden><i class="ic ic-move"></i>Mover</button>
+  <button id="surfaceClose" class="chip-btn icon-only" aria-label="Quitar selección"><i class="ic ic-close"></i></button>
 </div>
+
+<!-- imagen pendiente de colocar -->
+<div class="drop" id="drop" hidden>
+  <img id="dropImg" alt="">
+  <div class="drop-txt"><b>Arrastra a la caja</b><span>o toca la superficie</span></div>
+  <button class="chip-btn icon-only" id="dropCancel" aria-label="Descartar imagen"><i class="ic ic-close"></i></button>
+</div>
+
+<!-- proporción bloqueada -->
+<button class="lock" id="lock" hidden><i class="ic ic-lock"></i><span>Proporción</span></button>
 
 <nav class="dock" id="dockMain">
   <button class="dbtn" data-sheet="box"><i class="ic ic-box"></i><span>Caja</span></button>
   <button class="dbtn" id="btnAdd"><i class="ic ic-image"></i><span>Imagen</span></button>
-  <button class="dbtn" data-sheet="size"><i class="ic ic-ruler"></i><span>Tamaño</span></button>
+  <button class="dbtn" data-sheet="size"><i class="ic ic-ruler"></i><span>Medidas</span></button>
   <button class="dbtn" data-sheet="settings"><i class="ic ic-gear"></i><span>Ajustes</span></button>
 </nav>
 
 <nav class="dock dock-alt" id="dockSticker" hidden>
   <button class="dbtn" id="stCut"><i class="ic ic-cut"></i><span>Fondo</span></button>
   <button class="dbtn" id="stFit"><i class="ic ic-fit"></i><span>Ajustar</span></button>
+  <button class="dbtn" id="stCenter"><i class="ic ic-center"></i><span>Centrar</span></button>
   <button class="dbtn" id="stCopy"><i class="ic ic-copy"></i><span>Copiar</span></button>
   <button class="dbtn danger" id="stDel"><i class="ic ic-trash"></i><span>Borrar</span></button>
   <button class="dbtn ok" id="stDone"><i class="ic ic-check"></i><span>Listo</span></button>
@@ -70,7 +90,8 @@
     <button class="chip" data-preset="m">Mediana</button>
     <button class="chip" data-preset="l">Grande</button>
   </div>
-  <div class="sliders" id="sliders"></div>
+  <div id="dims"></div>
+  <p class="tip">Toca − y + o desliza el dedo sobre el número.</p>
 </section>
 
 <section class="sheet" id="sheet-settings" hidden>
@@ -80,7 +101,7 @@
   <label class="opt"><span><i class="ic ic-shadow"></i>Sombra</span><input type="checkbox" id="optShadow" checked></label>
   <label class="opt"><span><i class="ic ic-hd"></i>Alta calidad</span><input type="checkbox" id="optHQ" checked></label>
   <button class="wide danger" id="btnReset"><i class="ic ic-trash"></i>Reiniciar diseño</button>
-  <p class="tip">Toca una imagen para editarla. Toca la tapa para moverla.</p>
+  <p class="tip">Toca una superficie para elegirla · toca una imagen para editarla.</p>
 </section>
 
 <button class="exit-preview" id="exitPreview" hidden><i class="ic ic-close"></i>Salir</button>
