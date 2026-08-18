@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#f5ead8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="description" content="Diseña y personaliza cajas de cartón en 3D desde tu móvil.">
+<title>Cajas · Diseña en 3D</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23c99b62'/><path d='M6 11l10-5 10 5-10 5z' fill='%23f3e3c8'/><path d='M6 11v11l10 5V16z' fill='%23e0c193'/><path d='M26 11v11l-10 5V16z' fill='%23b98a55'/></svg>">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+<div id="hint" class="hint">Arrastra para girar · Pellizca para acercar</div>
+
+<header class="topbar" id="topbar">
+  <div class="brand"><i class="ic ic-brand"></i><span>Cajas</span></div>
+  <div class="row">
+    <button class="ibtn" id="btnUndo" aria-label="Deshacer" disabled><i class="ic ic-undo"></i></button>
+    <button class="ibtn" id="btnRedo" aria-label="Rehacer" disabled><i class="ic ic-redo"></i></button>
+    <button class="ibtn" id="btnPreview" aria-label="Vista previa"><i class="ic ic-eye"></i></button>
+  </div>
+</header>
+
+<!-- Controles de la imagen seleccionada -->
+<div class="pad" id="pad" hidden>
+  <button class="pad-btn" id="padRot" aria-label="Rotar imagen"><i class="ic ic-rotate"></i><b>Rotar</b></button>
+  <button class="pad-btn" id="padScale" aria-label="Escalar imagen"><i class="ic ic-scale"></i><b>Tamaño</b></button>
+</div>
+
+<nav class="dock" id="dockMain">
+  <button class="dbtn" data-sheet="box"><i class="ic ic-box"></i><span>Caja</span></button>
+  <button class="dbtn" id="btnAdd"><i class="ic ic-image"></i><span>Imagen</span></button>
+  <button class="dbtn" data-sheet="size"><i class="ic ic-ruler"></i><span>Tamaño</span></button>
+  <button class="dbtn" data-sheet="settings"><i class="ic ic-gear"></i><span>Ajustes</span></button>
+</nav>
+
+<nav class="dock dock-alt" id="dockSticker" hidden>
+  <button class="dbtn" id="stCut"><i class="ic ic-cut"></i><span>Fondo</span></button>
+  <button class="dbtn" id="stFit"><i class="ic ic-fit"></i><span>Ajustar</span></button>
+  <button class="dbtn" id="stCopy"><i class="ic ic-copy"></i><span>Copiar</span></button>
+  <button class="dbtn danger" id="stDel"><i class="ic ic-trash"></i><span>Borrar</span></button>
+  <button class="dbtn ok" id="stDone"><i class="ic ic-check"></i><span>Listo</span></button>
+</nav>
+
+<div class="scrim" id="scrim"></div>
+
+<section class="sheet" id="sheet-box" hidden>
+  <div class="grab"></div>
+  <h2>Caja y tapa</h2>
+  <div class="grid4">
+    <button class="tile" data-lid="open"><i class="ic ic-lid-open"></i><span>Abrir</span></button>
+    <button class="tile" data-lid="close"><i class="ic ic-lid-close"></i><span>Cerrar</span></button>
+    <button class="tile" data-lid="aside"><i class="ic ic-lid-aside"></i><span>Separar</span></button>
+    <button class="tile" data-lid="place"><i class="ic ic-lid-place"></i><span>Colocar</span></button>
+  </div>
+  <h3>Material</h3>
+  <div class="swatches" id="materials"></div>
+</section>
+
+<section class="sheet" id="sheet-size" hidden>
+  <div class="grab"></div>
+  <h2>Medidas</h2>
+  <div class="chips" id="presets">
+    <button class="chip" data-preset="s">Pequeña</button>
+    <button class="chip" data-preset="m">Mediana</button>
+    <button class="chip" data-preset="l">Grande</button>
+  </div>
+  <div class="sliders" id="sliders"></div>
+</section>
+
+<section class="sheet" id="sheet-settings" hidden>
+  <div class="grab"></div>
+  <h2>Ajustes</h2>
+  <label class="opt"><span><i class="ic ic-rotate"></i>Giro automático</span><input type="checkbox" id="optSpin"></label>
+  <label class="opt"><span><i class="ic ic-shadow"></i>Sombra</span><input type="checkbox" id="optShadow" checked></label>
+  <label class="opt"><span><i class="ic ic-hd"></i>Alta calidad</span><input type="checkbox" id="optHQ" checked></label>
+  <button class="wide danger" id="btnReset"><i class="ic ic-trash"></i>Reiniciar diseño</button>
+  <p class="tip">Toca una imagen para editarla. Toca la tapa para moverla.</p>
+</section>
+
+<button class="exit-preview" id="exitPreview" hidden><i class="ic ic-close"></i>Salir</button>
+
+<div class="loader" id="loader" hidden><div class="spin"></div><span id="loaderText">Procesando…</span></div>
+<div class="toast" id="toast"></div>
+
+<input type="file" id="filePick" accept="image/*" hidden>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
